@@ -1,0 +1,1671 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Solar Array Layout & Stringing</title>
+    <style>
+        * { box-sizing: border-box; }
+        html, body {
+            margin: 0; padding: 0; width: 100%; height: 100%;
+            overflow: hidden; background-color: #f0f2f5;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        /* --- Layout Structures --- */
+        .sidebar { position: fixed; left: 0; top: 0; bottom: 0; width: 60px; background: #fff; border-right: 1px solid #ddd; z-index: 200; display: flex; flex-direction: column; align-items: center; padding-top: 15px; box-shadow: 2px 0 5px rgba(0,0,0,0.05); }
+        .sidebar-btn { width: 40px; height: 40px; margin-bottom: 15px; border: 1px solid #eee; border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 18px; color: #555; background: #f9f9f9; transition: all 0.2s; }
+        .sidebar-btn:hover { background: #f0f0f0; border-color: #ccc; }
+        .sidebar-btn.active { background: #3b82f6; color: white; border-color: #2563eb; box-shadow: 0 2px 4px rgba(59, 130, 246, 0.3); }
+        
+        .panel-drawer { position: fixed; left: 60px; top: 0; bottom: 0; width: 320px; background: #fff; border-right: 1px solid #ddd; z-index: 150; transform: translateX(-100%); transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1); display: flex; flex-direction: column; }
+        .panel-drawer.open { transform: translateX(0); box-shadow: 4px 0 10px rgba(0,0,0,0.05); }
+        
+        .panel-content { padding: 15px; overflow-y: auto; overflow-x: hidden; flex: 1; display: none; flex-direction: column; }
+        .panel-content.active { display: flex; }
+        
+        .panel-header { padding: 15px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; }
+        .panel-header h2 { margin: 0; font-size: 16px; color: #333; }
+        
+        #canvas-container { position: absolute; top: 0; left: 0; right: 0; bottom: 0; z-index: 1; background-color: #e5e5e5; background-image: linear-gradient(#ddd 1px, transparent 1px), linear-gradient(90deg, #ddd 1px, transparent 1px); background-size: 20px 20px; cursor: grab; }
+        #canvas-container:active { cursor: grabbing; }
+        
+        canvas { display: block; }
+
+        /* --- Floating Elements --- */
+        .top-actions { position: fixed; top: 15px; right: 15px; z-index: 300; display: flex; gap: 8px; }
+        .stats-bar { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: rgba(255,255,255,0.95); padding: 8px 20px; border-radius: 20px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 300; font-size: 13px; color: #333; pointer-events: none; border: 1px solid #ddd; }
+        .zoom-controls { position: absolute; bottom: 20px; right: 20px; display: flex; flex-direction: column; gap: 5px; z-index: 100; }
+        .zoom-btn { width: 32px; height: 32px; border: 1px solid #ccc; background: #fff; cursor: pointer; font-size: 16px; border-radius: 4px; }
+        
+       /* --- Component Styles --- */
+        .input-group { display: flex; flex-direction: column; margin-bottom: 10px; min-width: 0; }
+        .input-group label { font-size: 11px; font-weight: bold; color: #666; margin-bottom: 4px; }
+        .input-group input, .input-group select { padding: 6px; border: 1px solid #ccc; border-radius: 4px; font-size: 12px; width: 100%; }
+
+        .array-list { display: flex; flex-direction: column; gap: 4px; margin: 10px 0; border: 1px solid #eee; background: #fafafa; padding: 5px; border-radius: 4px; max-height: 400px; overflow-y: auto; }
+        .array-item { padding: 8px 10px; border: 1px solid #ddd; background: #fff; border-radius: 4px; cursor: pointer; font-size: 12px; display: flex; justify-content: space-between; align-items: center; }
+        .array-item:hover { background: #f9f9f9; border-color: #bbb; }
+        .array-item.selected { background: #eff6ff; border-color: #3b82f6; color: #1e40af; font-weight: bold; }
+        .array-group-tag { font-size: 10px; background: #e5e7eb; color: #555; padding: 2px 5px; border-radius: 3px; margin-right: 5px; }
+
+        .props-panel { background: #f9f9f9; border: 1px solid #ddd; padding: 12px; border-radius: 6px; font-size: 12px; margin-top: 10px; }
+        .props-row { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; flex-wrap: wrap; }
+        .validation-msg { color: #d97706; font-size: 11px; margin-top: 4px; font-style: italic; }
+        
+        .string-row { display: flex; gap: 10px; margin-bottom: 8px; align-items: center; background: #fff; padding: 5px; border: 1px solid #eee; border-radius: 4px; }
+
+        .btn { padding: 6px 12px; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; color: white; transition: background 0.2s; }
+        .btn:hover { opacity: 0.9; }
+        .btn-add { background-color: #10b981; }
+        .btn-danger { background-color: #ef4444; }
+        .btn-blue { background-color: #3b82f6; }
+        .btn-gray { background-color: #6b7280; }
+
+        .tooltip { position: absolute; background: rgba(0, 0, 0, 0.8); color: white; padding: 5px 10px; border-radius: 4px; pointer-events: none; font-size: 12px; display: none; z-index: 1000; }
+        #file_loader { display: none; }
+
+        .print-list { max-height: 300px; overflow-y: auto; border: 1px solid #eee; padding: 10px; margin-bottom: 15px; border-radius: 4px; background: #f9f9f9; }
+        .print-group-header { font-weight: bold; color: #555; margin-top: 10px; padding-bottom: 5px; border-bottom: 1px solid #eee; font-size: 13px; }
+        .print-group-header:first-child { margin-top: 0; }
+        .print-item { display: flex; align-items: center; padding: 8px 5px; border-bottom: 1px solid #fff; font-size: 13px; }
+        .print-item:hover { background: #fff; }
+        .print-item input { margin-right: 10px; cursor: pointer; }
+        .print-item label { cursor: pointer; flex: 1; user-select: none; }
+
+        /* Modal */
+        .modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 2000; display: none; align-items: center; justify-content: center; }
+        .modal-content { background: white; padding: 20px; border-radius: 8px; width: 600px; max-width: 90%; max-height: 80vh; overflow-y: auto; display: flex; flex-direction: column; }
+        .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; border-bottom: 1px solid #eee; padding-bottom: 10px; }
+        .close-modal { background: none; border: none; font-size: 24px; cursor: pointer; color: #666; line-height: 1; }
+    </style>
+</head>
+<body>
+    <div class="sidebar">
+        <div class="sidebar-btn" id="btn_layout" onclick="togglePanel('layout')" title="Layout & Arrays">⊞</div>
+        <div class="sidebar-btn" id="btn_electrical" onclick="togglePanel('electrical')" title="Strings & Inverters">⚡</div>
+        <div class="sidebar-btn" id="btn_algo" onclick="togglePanel('algo')" title="Fill Algorithm">⚙</div>
+        <div class="sidebar-btn" id="btn_materials" onclick="togglePanel('materials')" title="Materials">🛠</div>
+    </div>
+
+    <div class="panel-drawer" id="main_drawer">
+        
+        <div id="panel_layout" class="panel-content">
+            <div class="panel-header">
+                <h2>Layout Configuration</h2>
+                <button class="btn btn-add" onclick="addNewArray()">+ Add</button>
+            </div>
+            
+            <div id="array_list" class="array-list"></div>
+
+            <div id="props_panel" class="props-panel" style="display:none;">
+                <div id="props_active" style="display:none;">
+                    <div class="props-row">
+                        <div class="input-group" style="flex:1">
+                            <label>Name</label>
+                            <input type="text" id="prop_name" style="width:100%" onchange="updateSelectedProp('name', this.value)">
+                        </div>
+                        <div class="input-group" style="width:80px">
+                            <label>Group</label>
+                            <input type="text" id="prop_group" style="width:100%" list="group_suggestions" onchange="updateSelectedProp('group', this.value)">
+                            <datalist id="group_suggestions"><option value="South Roof"><option value="West Garage"></datalist>
+                        </div>
+                        <button class="btn btn-danger" onclick="removeSelectedArray()" style="margin-top:14px">Del</button>
+                    </div>
+                    <hr style="border:0; border-top:1px solid #eee; margin:10px 0;">
+                    <div class="props-row">
+                        <div class="input-group" style="flex:1">
+                            <label>Shape</label>
+                            <select id="prop_shape" onchange="updateSelectedProp('type', this.value)">
+                                <option value="rect">Rectangle</option>
+                                <option value="trap">Trapezoid</option>
+                            </select>
+                        </div>
+                        <div class="input-group" style="flex:1">
+                        <label>Rail Dir</label>
+                        <select id="prop_rail_dir" onchange="updateSelectedProp('railDir', this.value)">
+                            <option value="row">Horizontal</option>
+                            <option value="col">Vertical</option>
+                        </select>
+                    </div>
+                    <div class="input-group" style="flex:1">
+                        <label>Slope</label>
+                        <select id="prop_slope_dir" onchange="updateSelectedProp('slopeDir', this.value)">
+                            <option value="S">South (S)</option>
+                            <option value="SE">South East (SE)</option>
+                            <option value="E">East (E)</option>
+                            <option value="NE">North East (NE)</option>
+                            <option value="N">North (N)</option>
+                            <option value="NW">North West (NW)</option>
+                            <option value="W">West (W)</option>
+                            <option value="SW">South West (SW)</option>
+                        </select>
+                    </div>
+                </div>
+                <div id="shape_rect_inputs" style="display:none;">
+                    <div class="props-row">
+                        <div class="input-group"><label>Rows</label><input type="number" id="prop_r_rows" onchange="updateSelectedProp('rows', this.value)"></div>
+                        <div class="input-group"><label>Cols</label><input type="number" id="prop_r_cols" onchange="updateSelectedProp('cols', this.value)"></div>
+                    </div>
+                </div>
+                    <div id="shape_trap_inputs" style="display:none;">
+                        <div class="props-row">
+                            <div class="input-group"><label>Top</label><input type="number" id="prop_t_top" onchange="updateSelectedProp('top', this.value)"></div>
+                            <div class="input-group"><label>Btm</label><input type="number" id="prop_t_bottom" onchange="updateSelectedProp('bottom', this.value)"></div>
+                            <div class="input-group"><label>Hgt</label><input type="number" id="prop_t_height" onchange="updateSelectedProp('height', this.value)"></div>
+                        </div>
+                        <div class="props-row">
+                            <div class="input-group" style="width:100%">
+                                <label>Slope</label>
+                                <select id="prop_t_slope" style="width:100%" onchange="updateSelectedProp('slope', this.value)">
+                                    <option value="1">One Side</option>
+                                    <option value="2">Two Sides</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div id="trap_validation" class="validation-msg"></div>
+                    </div>
+                    <div style="margin-top:10px; font-size:11px; color:#555; background:#eee; padding:5px; border-radius:4px;">
+                        Click canvas cells to toggle panels.
+                    </div>
+                </div>
+                <div id="props_empty" style="display:none; text-align:center; color:#888;">No array selected</div>
+            </div>
+            <div id="props_hint" class="props-panel" style="color:#888; text-align:center;">Select an array.</div>
+        </div>
+
+        <div id="panel_electrical" class="panel-content">
+            <div class="panel-header"><h2>Strings & Inverters</h2></div>
+            <div style="padding-top:10px;">
+                <div id="string_list_container"></div>
+                <button class="btn btn-add" style="width:100%; margin-top:5px;" onclick="addStringType()">+ Add String Type</button>
+                
+                <hr style="border:0; border-top:1px solid #eee; margin:20px 0;">
+                
+                <h3>Inverter Config</h3>
+            <div class="props-row">
+                <div class="input-group" style="flex:1">
+                    <label>Units</label>
+                    <input type="number" id="inp_inverters" value="10" min="1" onchange="updateInverterConfig('count', this.value)">
+                </div>
+                <div class="input-group" style="flex:1">
+                    <label>MPPTs/Inv</label>
+                    <input type="number" id="inp_mppts" value="2" min="1" onchange="updateInverterConfig('mppt', this.value)">
+                </div>
+                <div class="input-group" style="flex:1">
+                    <label>Str/MPPT</label>
+                    <input type="number" id="inp_spm" value="2" min="1" onchange="updateInverterConfig('spm', this.value)">
+                </div>
+            </div>
+        </div>
+    </div>
+    <div id="panel_algo" class="panel-content">
+        <div class="panel-header"><h2>Fill Algorithm</h2></div>
+        <div style="padding-top:15px;">
+            <div class="input-group" style="flex-direction:row; align-items:center; gap:10px;">
+                <input type="checkbox" id="chk_cross_group" style="width:auto;" onchange="updateAlgo('crossGroup', this.checked)">
+                <label style="margin:0; font-size:13px; font-weight:normal; cursor:pointer;" for="chk_cross_group">Allow Strings to Cross Groups</label>
+            </div>
+            <div style="font-size:11px; color:#666; margin-top:5px; margin-left:24px; margin-bottom:15px;">
+                If unchecked, strings will be cut off at the end of each array group.
+            </div>
+
+            <div class="input-group" style="flex-direction:row; align-items:center; gap:10px;">
+                <input type="checkbox" id="chk_strict_orient" style="width:auto;" onchange="updateAlgo('strictOrient', this.checked)">
+                <label style="margin:0; font-size:13px; font-weight:normal; cursor:pointer;" for="chk_strict_orient">Strict Orientation (No Crossing)</label>
+            </div>
+            <div style="font-size:11px; color:#666; margin-top:5px; margin-left:24px;">
+                If checked, strings will be cut off when moving between arrays with different Slope Directions (e.g. South to West), even within the same group.
+            </div>
+        </div>
+    </div>
+
+        <div id="panel_materials" class="panel-content">
+            <div class="panel-header"><h2>Material Estimates</h2></div>
+            <div style="padding-top:10px;">
+                <div class="props-row">
+                <div class="input-group" style="flex:1">
+                    <label>Panels per Rail</label>
+                    <input type="number" id="mat_ppr" value="4" min="1" onchange="calculateMaterials()">
+                </div>
+                <div class="input-group" style="flex:1">
+                    <label>Rails per Group</label>
+                    <input type="number" id="mat_rpp" value="2" min="1" onchange="calculateMaterials()">
+                </div>
+                <div class="input-group" style="flex:1">
+                    <label>L-feet per Rail</label>
+                    <input type="number" id="mat_lpr" value="2" min="0" onchange="calculateMaterials()">
+                </div>
+            </div>
+
+            <hr style="border:0; border-top:1px solid #eee; margin:15px 0;">
+                
+                <button class="btn btn-blue" style="width:100%" onclick="showMaterialModal()">View Full Summary</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="top-actions">
+        <button class="btn btn-danger" onclick="clearAll()">Clear All</button>
+        <button class="btn btn-blue" onclick="saveConfig()">Save</button>
+        <button class="btn btn-gray" onclick="document.getElementById('file_loader').click()">Load</button>
+        <button class="btn btn-gray" onclick="openPrintModal()">Print</button>
+        <input type="file" id="file_loader" accept=".json" onchange="loadConfig(this)">
+    </div>
+    
+    <div id="stats_bar" class="stats-bar"></div>
+
+    <div id="mat_modal" class="modal-overlay" onclick="if(event.target===this) closeMatModal()">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 style="margin:0; font-size:18px; color:#333;">Material Estimate Summary</h2>
+                <button class="close-modal" onclick="closeMatModal()">&times;</button>
+            </div>
+            <div id="material_summary_content"></div>
+            <div style="margin-top:20px; text-align:right;">
+                <button class="btn btn-gray" onclick="closeMatModal()">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="print_modal" class="modal-overlay" onclick="if(event.target===this) document.getElementById('print_modal').style.display='none'">
+        <div class="modal-content" style="width: 400px;">
+            <div class="modal-header">
+                <h2 style="margin:0; font-size:18px; color:#333;">Select Arrays to Print</h2>
+                <button class="close-modal" onclick="document.getElementById('print_modal').style.display='none'">&times;</button>
+            </div>
+            <div style="margin-bottom:10px; display:flex; gap:10px;">
+                <button class="btn btn-gray" style="padding:2px 8px; font-size:11px;" onclick="togglePrintChecks(true)">Select All</button>
+                <button class="btn btn-gray" style="padding:2px 8px; font-size:11px;" onclick="togglePrintChecks(false)">Deselect All</button>
+            </div>
+            <div id="print_list_container" class="print-list"></div>
+            <div style="margin-top:10px; text-align:right; display:flex; justify-content:flex-end; gap:10px;">
+                <button class="btn btn-gray" onclick="document.getElementById('print_modal').style.display='none'">Cancel</button>
+                <button class="btn btn-blue" onclick="confirmPrint()">Generate Report</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="canvas-container">
+        <canvas id="solarCanvas"></canvas>
+        
+        <div class="zoom-controls">
+            <button class="zoom-btn" onclick="zoomIn()" title="Zoom In">+</button>
+            <button class="zoom-btn" onclick="zoomOut()" title="Zoom Out">-</button>
+            <button class="zoom-btn" onclick="autoFitView()" title="Fit to Screen">⛶</button>
+        </div>
+        <div id="tooltip" class="tooltip"></div>
+    </div>
+
+    <script>
+        // --- DRAWING CONSTANTS ---
+        const DRAW_OPTS = {
+            panelWidth: 35,
+            panelHeight: 50,
+            gapX: 3,
+            gapY: 3,
+            tableMargin: 35,
+            inverterHeight: 120
+        };
+
+        // --- VIEW STATE ---
+        let view = {
+            scale: 1,
+            x: 0,
+            y: 0,
+            isDragging: false,
+            lastX: 0,
+            lastY: 0
+        };
+
+        // --- APP STATE ---
+        let state = {
+            tables: new Map(), // Key: ID (int)
+            nextId: 1,
+            stringTypes: [
+                { id: 1, count: 13, size: 8 },
+                { id: 2, count: 7, size: 9 }
+            ],
+            inverters: 10,
+            mpptCount: 2,
+            stringsPerMppt: 2,
+            allowCrossGroup: true,
+            strictOrient: false,
+            selectedId: null 
+        };
+
+        // --- HELPER: MASK GENERATION ---
+        function generateMask(data) {
+            let rows, cols;
+            let gridMap = [];
+
+            if (data.type === 'rect') {
+                rows = data.rows;
+                cols = data.cols;
+                for(let r=0; r<rows; r++) {
+                    let rowArr = new Array(cols).fill(1); // 1 = Active
+                    gridMap.push(rowArr);
+                }
+            } else {
+                rows = data.rows;
+                const top = data.topBase;
+                const bottom = data.bottomBase;
+                cols = Math.max(top, bottom); 
+                
+                for(let r=0; r<rows; r++) {
+                    let progress = (rows === 1) ? 1 : r / (rows - 1);
+                    let width = Math.round(top + (bottom - top) * progress);
+                    let rowArr = new Array(cols).fill(0);
+                    
+                    if (data.slopeType === "2") {
+                        let offset = Math.floor((cols - width) / 2);
+                        for(let k=0; k<width; k++) { if (offset + k < cols) rowArr[offset + k] = 1; }
+                    } else {
+                        for(let k=0; k<width; k++) rowArr[k] = 1;
+                    }
+                    gridMap.push(rowArr);
+                }
+            }
+            return gridMap;
+        }
+
+        // --- INITIALIZATION ---
+        function init() {
+            const localData = localStorage.getItem('solar_layout_cfg');
+            let loaded = false;
+            
+            if (localData) {
+                try {
+                    const imported = JSON.parse(localData);
+                    state.nextId = imported.nextId || 100;
+                    state.stringTypes = imported.stringTypes || []; 
+                    state.inverters = imported.inverters || 10;
+                    state.mpptCount = imported.mpptCount || 2;
+                    state.stringsPerMppt = imported.stringsPerMppt || 2;
+                    state.allowCrossGroup = (imported.allowCrossGroup !== undefined) ? imported.allowCrossGroup : true;
+                    state.strictOrient = (imported.strictOrient !== undefined) ? imported.strictOrient : false;
+                    state.tables = new Map(imported.tables);
+                    loaded = true;
+                } catch(e) { console.error("Local storage error", e); }
+            }
+
+            if (!loaded) {
+                const defaults = [
+                    { name: "Array 1", grp: "South Roof" }, 
+                    { name: "Array 2", grp: "South Roof" },
+                    { name: "Array 3", grp: "West Garage" },
+                    { name: "Array 4", grp: "West Garage" }
+                ];
+                
+                defaults.forEach(d => {
+                    const id = state.nextId++;
+                    const tData = { 
+                        id: id, name: d.name, group: d.grp, type: 'rect', 
+                        rows: 2, cols: 11,
+                    topBase: 8, bottomBase: 12, slopeType: "2",
+                    railDir: 'row', slopeDir: 'S'
+                };
+                tData.mask = generateMask(tData);
+                    state.tables.set(id, tData);
+                });
+            }
+
+            document.getElementById('inp_inverters').value = state.inverters;
+            document.getElementById('inp_mppts').value = state.mpptCount;
+            document.getElementById('inp_spm').value = state.stringsPerMppt;
+            document.getElementById('chk_cross_group').checked = state.allowCrossGroup;
+            document.getElementById('chk_strict_orient').checked = state.strictOrient;
+            window.addEventListener('resize', handleResize);
+            renderUI();
+            
+            setTimeout(() => { handleResize(); autoFitView(); }, 100);
+        }
+
+        function saveToLocal() {
+            const exportData = { ...state, tables: Array.from(state.tables.entries()), selectedId: null };
+            localStorage.setItem('solar_layout_cfg', JSON.stringify(exportData));
+        }
+
+        function handleResize() {
+            const container = document.getElementById('canvas-container');
+            const canvas = document.getElementById('solarCanvas');
+            canvas.width = container.clientWidth;
+            canvas.height = container.clientHeight;
+            draw();
+        }
+
+        // --- ZOOM & PAN ---
+        function zoomIn() { applyZoom(1.2); }
+        function zoomOut() { applyZoom(0.8); }
+        
+        function applyZoom(factor) {
+            const canvas = document.getElementById('solarCanvas');
+            const cx = canvas.width / 2;
+            const cy = canvas.height / 2;
+            
+            // Zoom towards center of screen
+            view.x = cx - (cx - view.x) * factor;
+            view.y = cy - (cy - view.y) * factor;
+            view.scale *= factor;
+            draw();
+        }
+
+        function autoFitView() {
+            const data = generateData(); // Generate to get bounds
+            if(data.tables.length === 0) return;
+
+            // Calculate bounding box of all content
+            let globalMaxCols = 1;
+            let globalMaxRows = 1;
+            
+            // We need to estimate World Width/Height
+            // The logic in draw() relies on cellW/cellH derived from max dimensions
+            data.tables.forEach(t => {
+                if(t.bounds.cols > globalMaxCols) globalMaxCols = t.bounds.cols;
+                if(t.bounds.rows > globalMaxRows) globalMaxRows = t.bounds.rows;
+            });
+
+            const cellW = (globalMaxCols * (DRAW_OPTS.panelWidth + DRAW_OPTS.gapX)) + DRAW_OPTS.tableMargin;
+            const cellH = (globalMaxRows * (DRAW_OPTS.panelHeight + DRAW_OPTS.gapY)) + DRAW_OPTS.tableMargin + 30;
+
+            const worldW = (state.gridCols * cellW) + DRAW_OPTS.tableMargin;
+            const worldH = (state.gridRows * cellH) + DRAW_OPTS.tableMargin + DRAW_OPTS.inverterHeight + 50;
+
+            const canvas = document.getElementById('solarCanvas');
+            const scaleX = (canvas.width - 60) / worldW; // 60px padding
+            const scaleY = (canvas.height - 60) / worldH;
+            
+            view.scale = Math.min(scaleX, scaleY, 1.5); // Cap max zoom
+            
+            // Center
+            view.x = (canvas.width - worldW * view.scale) / 2;
+            view.y = (canvas.height - worldH * view.scale) / 2;
+            
+            draw();
+        }
+
+        // --- MOUSE HANDLERS (PAN/ZOOM) ---
+        const container = document.getElementById('canvas-container');
+        
+        container.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            const factor = e.deltaY > 0 ? 0.9 : 1.1;
+            
+            const rect = container.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+
+            view.x = mouseX - (mouseX - view.x) * factor;
+            view.y = mouseY - (mouseY - view.y) * factor;
+            view.scale *= factor;
+            draw();
+        });
+
+        container.addEventListener('mousedown', (e) => {
+            // If dragging logic vs clicking logic
+            view.isDragging = true;
+            view.lastX = e.clientX;
+            view.lastY = e.clientY;
+            // Don't draw yet, wait for move
+        });
+
+        window.addEventListener('mousemove', (e) => {
+            if (view.isDragging) {
+                const dx = e.clientX - view.lastX;
+                const dy = e.clientY - view.lastY;
+                view.x += dx;
+                view.y += dy;
+                view.lastX = e.clientX;
+                view.lastY = e.clientY;
+                draw();
+            }
+        });
+
+        window.addEventListener('mouseup', () => {
+            view.isDragging = false;
+        });
+
+
+        // --- UI LOGIC ---
+
+        function renderUI() {
+            renderArrayList();
+            renderStringList();
+            updatePropsPanel();
+            calculateMaterials();
+        }
+
+        function renderArrayList() {
+            const container = document.getElementById('array_list');
+            container.innerHTML = '';
+            
+            const arrays = Array.from(state.tables.values());
+            // Sort by Group then Name
+            arrays.sort((a,b) => {
+                if(a.group !== b.group) return a.group.localeCompare(b.group);
+                return a.name.localeCompare(b.name);
+            });
+
+            arrays.forEach(data => {
+                const el = document.createElement('div');
+                const isSelected = state.selectedId === data.id;
+                el.className = 'array-item' + (isSelected ? ' selected' : '');
+                el.innerHTML = `<div><span class="array-group-tag">${data.group}</span> ${data.name}</div>`;
+                el.onclick = () => selectArray(data.id);
+                container.appendChild(el);
+            });
+        }
+
+        function selectArray(id) {
+            state.selectedId = id;
+            renderArrayList();
+            updatePropsPanel();
+            draw();
+        }
+
+        function addNewArray() {
+            const id = state.nextId++;
+            const newData = { 
+            id: id, name: `Array ${id}`, group: 'New Group', type: 'rect', 
+            rows: 2, cols: 11, topBase: 8, bottomBase: 12, slopeType: "2",
+            railDir: 'row', slopeDir: 'S'
+        };
+        newData.mask = generateMask(newData);
+            state.tables.set(id, newData);
+            selectArray(id);
+            calculateMaterials();
+            saveToLocal();
+        }
+
+        function updatePropsPanel() {
+            const hint = document.getElementById('props_hint');
+            const panel = document.getElementById('props_panel');
+            const emptyState = document.getElementById('props_empty');
+            const activeState = document.getElementById('props_active');
+
+            if (!state.selectedId) {
+                hint.style.display = 'block'; panel.style.display = 'none'; return;
+            }
+
+            hint.style.display = 'none'; panel.style.display = 'block';
+            const data = state.tables.get(state.selectedId);
+
+            if (data) {
+                emptyState.style.display = 'none';
+                activeState.style.display = 'block';
+                
+                document.getElementById('prop_name').value = data.name;
+                document.getElementById('prop_group').value = data.group;
+                document.getElementById('prop_shape').value = data.type;
+                document.getElementById('prop_rail_dir').value = data.railDir || 'row';
+                document.getElementById('prop_slope_dir').value = data.slopeDir || 'S';
+
+            const rectInputs = document.getElementById('shape_rect_inputs');
+                const trapInputs = document.getElementById('shape_trap_inputs');
+
+                if (data.type === 'rect') {
+                    rectInputs.style.display = 'block';
+                    trapInputs.style.display = 'none';
+                    document.getElementById('prop_r_rows').value = data.rows;
+                    document.getElementById('prop_r_cols').value = data.cols;
+                } else {
+                    rectInputs.style.display = 'none';
+                    trapInputs.style.display = 'block';
+                    document.getElementById('prop_t_top').value = data.topBase || 10;
+                    document.getElementById('prop_t_bottom').value = data.bottomBase || 14;
+                    document.getElementById('prop_t_height').value = data.rows || 3;
+                    document.getElementById('prop_t_slope').value = data.slopeType || "2";
+                    validateTrapezoid(data);
+                }
+            } else {
+                emptyState.style.display = 'block';
+                activeState.style.display = 'none';
+            }
+        }
+
+        // --- ARRAY EDITING LOGIC ---
+        function toggleMaskCell(tableId, cellR, cellC) {
+            let data = state.tables.get(tableId);
+            if (!data) return;
+
+            if (!data.mask) data.mask = generateMask(data);
+
+            data.mask[cellR][cellC] = data.mask[cellR][cellC] ? 0 : 1;
+            state.tables.set(tableId, data);
+            
+            draw();
+            calculateMaterials();
+            saveToLocal();
+        }
+        function validateTrapezoid(data) {
+            const msg = document.getElementById('trap_validation'); msg.textContent = "";
+            if(data.type !== 'trap' || data.rows <=1) return;
+            if (data.slopeType === "2" && (data.topBase % 2) !== (data.bottomBase % 2)) {
+                msg.textContent = `Tip: Use same parity (Even/Odd) for symmetry.`;
+            }
+        }
+        function removeSelectedArray() {
+            if (!state.selectedId) return;
+            state.tables.delete(state.selectedId);
+            state.selectedId = null;
+            renderUI(); draw(); calculateMaterials();
+            saveToLocal();
+        }
+        
+        function updateSelectedProp(prop, val) {
+            if (!state.selectedId) return;
+            let data = state.tables.get(state.selectedId);
+            if (!data) return;
+            
+            let dimChanged = false;
+            if (prop === 'name') data.name = val;
+            if (prop === 'group') data.group = val;
+            if (prop === 'type') {
+                data.type = val; dimChanged = true;
+                if (val === 'trap' && !data.topBase) { data.topBase = 8; data.bottomBase = 12; data.rows = 3; data.slopeType = "2"; }
+                if (val === 'rect' && !data.cols) { data.rows = 2; data.cols = 11; }
+            }
+            if (prop === 'rows') { data.rows = parseInt(val)||1; dimChanged = true; }
+            if (prop === 'cols') { data.cols = parseInt(val)||1; dimChanged = true; }
+            if (prop === 'top') { data.topBase = parseInt(val)||1; dimChanged = true; }
+            if (prop === 'bottom') { data.bottomBase = parseInt(val)||1; dimChanged = true; }
+            if (prop === 'height') { data.rows = parseInt(val)||1; dimChanged = true; }
+            if (prop === 'slope') { data.slopeType = val; dimChanged = true; }
+            if (prop === 'railDir') { data.railDir = val; }
+            if (prop === 'slopeDir') { data.slopeDir = val; }
+
+            if (dimChanged) data.mask = generateMask(data);
+            state.tables.set(state.selectedId, data);
+            
+            if (prop === 'name' || prop === 'group') renderArrayList(); 
+            updatePropsPanel(); draw(); calculateMaterials();
+            saveToLocal();
+        }
+        
+        // --- DATA GEN ---
+        function renderStringList() { 
+            const container = document.getElementById('string_list_container'); container.innerHTML = '';
+            state.stringTypes.forEach((st, index) => {
+                const row = document.createElement('div'); row.className = 'string-row';
+                row.innerHTML = `<div class="input-group"><label>Cnt</label><input type="number" value="${st.count}" onchange="updateString(${index}, 'count', this.value)"></div>
+                    <div style="font-size:12px">x</div><div class="input-group"><label>Pnl</label><input type="number" value="${st.size}" onchange="updateString(${index}, 'size', this.value)"></div>
+                    <button class="btn btn-danger" onclick="removeString(${index})" style="margin-top:14px">×</button>`;
+                container.appendChild(row);
+            });
+        }
+        function addStringType() { state.stringTypes.push({ count: 1, size: 10 }); renderStringList(); draw(); saveToLocal(); }
+        function removeString(index) { state.stringTypes.splice(index, 1); renderStringList(); draw(); saveToLocal(); }
+        function updateString(index, f, v) { state.stringTypes[index][f] = parseInt(v) || 0; draw(); saveToLocal(); }
+        function updateInverterConfig(key, val) {
+            const v = parseInt(val) || 1;
+            if (key === 'count') state.inverters = v;
+            if (key === 'mppt') state.mpptCount = v;
+            if (key === 'spm') state.stringsPerMppt = v;
+            draw(); saveToLocal();
+        }
+
+        function updateAlgo(key, val) {
+            if (key === 'crossGroup') state.allowCrossGroup = val;
+            if (key === 'strictOrient') state.strictOrient = val;
+            draw(); saveToLocal();
+        }
+
+        // --- CORE LOGIC ---
+        function generateData() {
+            // state.inverters is now the source of truth, updated by updateInverters()
+            
+            // 1. Strings Setup
+            let strings = [];
+            let globalStrId = 1;
+            state.stringTypes.forEach((type) => {
+                for(let i=0; i<type.count; i++) {
+                    const hue = (globalStrId * 137.5) % 360;
+                    strings.push({ id: globalStrId++, size: type.size, type: `${type.size}p`, color: `hsla(${hue}, 70%, 50%, 1)`, lightColor: `hsla(${hue}, 70%, 90%, 1)` });
+                }
+            });
+            let panelStream = [];
+            strings.forEach(str => {
+                for(let p=1; p<=str.size; p++) panelStream.push({ stringId: str.id, stringType: str.type, panelNum: p, totalInString: str.size, color: str.color, lightColor: str.lightColor });
+            });
+
+            // 2. Table Processing & Layout Engine
+            let tablesData = [];
+            let streamIdx = 0;
+            let totalCapacity = 0;
+            
+            // Convert map to array and sort by group
+            let rawTables = Array.from(state.tables.values());
+            rawTables.sort((a,b) => {
+                 if(a.group !== b.group) return a.group.localeCompare(b.group);
+                 return a.name.localeCompare(b.name);
+            });
+
+            // Group tables
+            let groups = {};
+            rawTables.forEach(t => {
+                if(!groups[t.group]) groups[t.group] = [];
+                groups[t.group].push(t);
+            });
+
+            // Layout Cursor
+            let layoutY = DRAW_OPTS.tableMargin;
+            let layoutMaxW = 0;
+            let layoutMaxH = 0;
+
+            for (let grpName in groups) {
+            let grpArray = groups[grpName];
+
+            // Prioritize continuity of slopeDir
+            // Prioritize continuity of slopeDir
+            let unprocessed = [...grpArray];
+            let orderedGroup = [];
+            if (unprocessed.length > 0) {
+                let current = unprocessed.shift();
+                orderedGroup.push(current);
+                while (unprocessed.length > 0) {
+                    const lastSlope = current.slopeDir || 'S';
+                    const nextIdx = unprocessed.findIndex(t => (t.slopeDir || 'S') === lastSlope);
+                    if (nextIdx !== -1) {
+                        current = unprocessed.splice(nextIdx, 1)[0];
+                    } else {
+                        current = unprocessed.shift();
+                    }
+                    orderedGroup.push(current);
+                }
+            }
+
+            // Calculate total capacity for stats
+            let groupTotalCap = 0;
+            orderedGroup.forEach(t => {
+                let cap = 0;
+                if(t.mask) t.mask.forEach(row => row.forEach(val => cap += val));
+                t._tempCap = cap; 
+                totalCapacity += cap;
+                groupTotalCap += cap;
+            });
+
+            // Batch Buffer
+            let groupPanels = [];
+            let layoutX = DRAW_OPTS.tableMargin;
+            let rowMaxH = 0;
+            let lastSlope = null;
+
+            // Debug Info for this Group
+            const grpDebug = { group: grpName, arrays: [] };
+
+            // Process Arrays one by one with a Refillable Buffer
+            orderedGroup.forEach(tConfig => {
+                const needed = tConfig._tempCap;
+                const curSlope = tConfig.slopeDir || 'S';
+
+                // 1. Refill Buffer from Stream if needed
+                while(groupPanels.length < needed && streamIdx < panelStream.length) {
+                    groupPanels.push(panelStream[streamIdx]);
+                    streamIdx++;
+                }
+
+                // 2. Strict Orientation Logic
+                let skipped = 0;
+                if (state.strictOrient && lastSlope !== null && curSlope !== lastSlope) {
+                    // If buffer has panels and the first one is NOT a start of a string, dump panels until we find a start
+                    while(groupPanels.length > 0 && groupPanels[0].panelNum !== 1) {
+                        groupPanels.shift(); 
+                        skipped++; // We don't rewind streamIdx, these are "wasted" or skipped in the stream order
+                    }
+                    // If we dumped panels, we might need to Refill again to fill the array
+                    while(groupPanels.length < needed && streamIdx < panelStream.length) {
+                        groupPanels.push(panelStream[streamIdx]);
+                        streamIdx++;
+                    }
+                }
+                lastSlope = curSlope;
+
+                // 3. Extract panels for this array
+                const myPanels = groupPanels.splice(0, needed);
+
+                // 4. Fill
+                const grid = fillStructure(tConfig.mask, myPanels, tConfig.railDir || 'row', tConfig.slopeDir || 'S');
+                const bounds = { rows: tConfig.mask.length, cols: tConfig.mask[0].length };
+
+                grpDebug.arrays.push({ name: tConfig.name, cap: needed, filled: myPanels.length, slope: curSlope, skippedStr: skipped });
+
+                // Dimensions
+                const isVert = tConfig.railDir === 'col';
+                const pW = isVert ? DRAW_OPTS.panelHeight : DRAW_OPTS.panelWidth;
+                const pH = isVert ? DRAW_OPTS.panelWidth : DRAW_OPTS.panelHeight;
+
+                const pixelW = (bounds.cols * (pW + DRAW_OPTS.gapX)) + 10; 
+                const pixelH = (bounds.rows * (pH + DRAW_OPTS.gapY)) + 25; 
+
+                tablesData.push({ 
+                    ...tConfig, 
+                    grid: grid, 
+                    bounds: bounds,
+                    layout: { x: layoutX, y: layoutY, w: pixelW, h: pixelH },
+                    _assignedPanels: myPanels // Ref for backtracking
+                });
+
+                layoutX += pixelW + DRAW_OPTS.tableMargin;
+                rowMaxH = Math.max(rowMaxH, pixelH);
+            });
+
+            // Post-Group Logic: "Cross Group" Check
+            // If not allowed, we check the very last panel of the last array.
+            // If it is mid-string, we pop those panels off and rewind streamIdx.
+            if (!state.allowCrossGroup) {
+                // Iterate backwards through arrays in this group to find the last placed panel
+                for(let i = tablesData.length - 1; i >= 0; i--) {
+                    const t = tablesData[i];
+                    if (t.group !== grpName) break; // Optimization: only check current group
+
+                    const assigned = t._assignedPanels;
+                    if (assigned && assigned.length > 0) {
+                        const lastP = assigned[assigned.length - 1];
+                        if (lastP.panelNum < lastP.totalInString) {
+                            // Cut detected. Remove this string segment.
+                            const cutId = lastP.stringId;
+                            let removedCount = 0;
+
+                            // We need to remove from the array's grid and the assigned list
+                            // Backward loop on assigned panels
+                            for(let k = assigned.length - 1; k >= 0; k--) {
+                                if(assigned[k].stringId === cutId) {
+                                    assigned.pop();
+                                    removedCount++;
+                                } else {
+                                    break; 
+                                }
+                            }
+
+                            // Re-render grid for this table
+                            t.grid = fillStructure(t.mask, assigned, t.railDir, t.slopeDir);
+
+                            // Rewind Global Stream
+                            streamIdx -= removedCount;
+                            console.log(`[Group ${grpName}] Backtracked ${removedCount} panels to enforce Group Crossing Rule.`);
+                        }
+                        break; // Only check the very last string of the group
+                    }
+                }
+            }
+
+            console.log('Algorithm Stats:', JSON.stringify(grpDebug, null, 2));
+
+            layoutMaxW = Math.max(layoutMaxW, layoutX);
+            layoutY += rowMaxH + DRAW_OPTS.tableMargin + 20; 
+        }
+        layoutMaxH = layoutY;
+
+        // Calculate Placed Count
+        let placedCount = 0;
+        tablesData.forEach(t => t.grid.forEach(r => r.forEach(c => { if(c) placedCount++; })));
+
+        const diff = totalCapacity - panelStream.length;
+        document.getElementById('stats_bar').innerHTML = `Panels: <b>${panelStream.length}</b> | Placed: <b>${placedCount}</b> | Capacity: <b>${totalCapacity}</b>`;
+
+        // --- INVERTER MAPPING LOGIC ---
+        // 1. Identify Direction of each String
+        const stringDirMap = new Map();
+        tablesData.forEach(t => {
+            t.grid.forEach(r => r.forEach(p => {
+                if(p) {
+                    // If a string spans multiple directions, first one wins (simplified)
+                    if (!stringDirMap.has(p.stringId)) stringDirMap.set(p.stringId, t.slopeDir || 'S');
+                }
+            }));
+        });
+
+        // 2. Prepare Inverters & MPPTs
+        let inverters = [];
+        for(let k=0; k<state.inverters; k++) {
+            let mppts = [];
+            for(let m=0; m<state.mpptCount; m++) mppts.push({ id: m+1, strings: [], capacity: state.stringsPerMppt, dir: null });
+            inverters.push({ id: k+1, mppts: mppts, totalPanels: 0 });
+        }
+
+        // 3. Group Strings by Direction
+        // Only use strings that are actually placed (or all if we want to include spares, but spares have no direction)
+        // Let's include all strings, treating unplaced as 'Unknown' direction
+        const stringsByDir = {};
+        [...strings].sort((a,b) => b.size - a.size).forEach(s => {
+            const dir = stringDirMap.get(s.id) || 'Unassigned';
+            if(!stringsByDir[dir]) stringsByDir[dir] = [];
+            stringsByDir[dir].push(s);
+        });
+
+        // 4. Distribute
+        // Strategy: Fill MPPTs with same direction
+        Object.keys(stringsByDir).forEach(dir => {
+            const group = stringsByDir[dir];
+            group.forEach(str => {
+                let allocated = false;
+
+                // Pass 1: Find MPPT already assigned to this Dir with space
+                for (let inv of inverters) {
+                    for (let mppt of inv.mppts) {
+                        if (mppt.dir === dir && mppt.strings.length < mppt.capacity) {
+                            mppt.strings.push(str);
+                            inv.totalPanels += str.size;
+                            allocated = true;
+                            break;
+                        }
+                    }
+                    if (allocated) break;
+                }
+
+                // Pass 2: Find Empty MPPT
+                if (!allocated) {
+                    for (let inv of inverters) {
+                        for (let mppt of inv.mppts) {
+                            if (mppt.dir === null) {
+                                mppt.dir = dir;
+                                mppt.strings.push(str);
+                                inv.totalPanels += str.size;
+                                allocated = true;
+                                break;
+                            }
+                        }
+                        if (allocated) break;
+                    }
+                }
+
+                // Pass 3: Fallback (mix directions if full)
+                if (!allocated) {
+                    for (let inv of inverters) {
+                        for (let mppt of inv.mppts) {
+                            if (mppt.strings.length < mppt.capacity) {
+                                mppt.strings.push(str);
+                                inv.totalPanels += str.size;
+                                // Mark as mixed?
+                                if(mppt.dir !== dir) mppt.dir = 'Mixed'; 
+                                allocated = true;
+                                break;
+                            }
+                        }
+                        if (allocated) break;
+                    }
+                }
+            });
+        });
+
+        return { tables: tablesData, inverters, worldW: layoutMaxW, worldH: layoutMaxH };
+    }
+        
+        function autoFitView() {
+            const data = generateData(); 
+            if(data.tables.length === 0) return;
+
+            const worldW = data.worldW;
+            const worldH = data.worldH + DRAW_OPTS.inverterHeight + 50;
+
+            const canvas = document.getElementById('solarCanvas');
+            const scaleX = (canvas.width - 60) / worldW; 
+            const scaleY = (canvas.height - 60) / worldH;
+            
+            view.scale = Math.min(scaleX, scaleY, 1.5); 
+            view.x = (canvas.width - worldW * view.scale) / 2;
+            view.y = (canvas.height - worldH * view.scale) / 2;
+            
+            draw();
+        }
+
+        function fillStructure(mask, panels, railDir, slopeDir) {
+        let validSlots = [];
+        const rows = mask.length;
+        const cols = mask[0].length;
+
+        for(let r=0; r<rows; r++) {
+            for(let c=0; c<cols; c++) {
+                if(mask[r][c] === 1) validSlots.push({ r, c });
+            }
+        }
+
+        if(validSlots.length === 0) return Array(rows).fill(null).map(()=>Array(cols).fill(null));
+
+        let vDir = 1, hDir = 1;
+        if (slopeDir.includes('N')) vDir = -1;
+        if (slopeDir.includes('W')) hDir = -1;
+
+        validSlots.sort((a, b) => {
+            if (railDir === 'col') {
+                if (a.c !== b.c) return (a.c - b.c) * hDir;
+                const isBaseCol = (hDir === 1) ? (a.c % 2 === 0) : (a.c % 2 !== 0);
+                const dir = isBaseCol ? vDir : -vDir;
+                return (a.r - b.r) * dir;
+            } else {
+                if (a.r !== b.r) return (a.r - b.r) * vDir;
+                const isBaseRow = (vDir === 1) ? (a.r % 2 === 0) : (a.r % 2 !== 0);
+                const dir = isBaseRow ? hDir : -hDir;
+                return (a.c - b.c) * dir;
+            }
+        });
+
+        const finalGrid = Array(rows).fill(null).map(() => Array(cols).fill(null));
+        validSlots.forEach((slot, index) => { 
+            if (index < panels.length) finalGrid[slot.r][slot.c] = panels[index]; 
+        });
+        return finalGrid;
+    }
+
+        // --- DRAWING ---
+        const canvas = document.getElementById('solarCanvas');
+        const ctx = canvas.getContext('2d');
+        let interactiveZones = []; // Tooltips
+        let clickZones = []; // Click events (world coords)
+
+        function draw() {
+            const data = generateData();
+            interactiveZones = [];
+            clickZones = [];
+
+            // Clear Screen
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Apply Transforms
+            ctx.save();
+            ctx.translate(view.x, view.y);
+            ctx.scale(view.scale, view.scale);
+
+            // Draw Arrays
+            let lastGroup = null;
+            
+            data.tables.forEach(table => {
+                const originX = table.layout.x;
+                const originY = table.layout.y;
+                const isSelected = state.selectedId === table.id;
+
+                // Group Label
+                if (table.group !== lastGroup) {
+                    ctx.fillStyle = '#888';
+                    ctx.font = 'bold 12px sans-serif';
+                    ctx.textAlign = 'left';
+                    ctx.fillText(table.group.toUpperCase(), originX, originY - 22);
+                    lastGroup = table.group;
+                }
+
+                // Name
+                ctx.fillStyle = isSelected ? '#3b82f6' : '#333';
+                ctx.font = 'bold 16px sans-serif';
+                ctx.textAlign = 'left';
+                const dirLabel = table.slopeDir ? `(${table.slopeDir})` : '(S)';
+                ctx.fillText(`${table.name} ${dirLabel}`, originX, originY - 5);
+
+                // Click Zone (Array Selection)
+                const frameW = table.layout.w;
+                const frameH = table.layout.h;
+                // Add array selection zone only if not clicking a specific cell (handled by layer order, or simple check)
+                clickZones.push({ type: 'array', id: table.id, x: originX, y: originY, w: frameW, h: frameH });
+
+                // Frame
+                if(isSelected) {
+                    ctx.strokeStyle = '#f59e0b'; ctx.lineWidth = 2;
+                    ctx.strokeRect(originX - 2, originY - 2, frameW + 4, frameH + 4);
+                }
+
+                // Panels
+            const pOffsetX = 5;
+            const pOffsetY = 20; // Space for title
+
+            const isVert = table.railDir === 'col';
+            const pW = isVert ? DRAW_OPTS.panelHeight : DRAW_OPTS.panelWidth;
+            const pH = isVert ? DRAW_OPTS.panelWidth : DRAW_OPTS.panelHeight;
+
+            let connectionPoints = {};
+            table.grid.forEach((row, rIndex) => {
+                row.forEach((panel, cIndex) => {
+                    const x = originX + pOffsetX + (cIndex * (pW + DRAW_OPTS.gapX));
+                    const y = originY + pOffsetY + (rIndex * (pH + DRAW_OPTS.gapY));
+                    const isMaskActive = table.mask[rIndex] && table.mask[rIndex][cIndex] === 1;
+
+                    if (panel) {
+                        ctx.fillStyle = panel.lightColor; ctx.fillRect(x, y, pW, pH);
+                        ctx.strokeStyle = panel.color; ctx.lineWidth = 2; ctx.strokeRect(x, y, pW, pH);
+                        ctx.fillStyle = '#000'; ctx.textAlign = 'center'; ctx.font = '9px sans-serif';
+                        ctx.fillText(`S${panel.stringId}`, x + pW/2, y + pH/2 - 4);
+                        ctx.font = 'bold 9px sans-serif'; ctx.fillText(panel.panelNum, x + pW/2, y + pH/2 + 7);
+                        interactiveZones.push({ x, y, w: pW, h: pH, info: panel });
+                        if(!connectionPoints[panel.stringId]) connectionPoints[panel.stringId] = [];
+                        connectionPoints[panel.stringId].push({ x: x + pW/2, y: y + pH/2, num: panel.panelNum, color: panel.color });
+                    } else if (!isMaskActive) {
+                        ctx.fillStyle = '#f3f4f6'; ctx.fillRect(x, y, pW, pH);
+                        ctx.strokeStyle = '#e5e7eb'; ctx.lineWidth = 1;
+                        ctx.setLineDash([2, 2]); ctx.strokeRect(x, y, pW, pH); ctx.setLineDash([]);
+                    } else {
+                        ctx.fillStyle = '#fff'; ctx.fillRect(x, y, pW, pH);
+                        ctx.strokeStyle = '#ccc'; ctx.lineWidth = 1; ctx.strokeRect(x, y, pW, pH);
+                    }
+
+                    if (isSelected) {
+                        clickZones.push({ type: 'cell', id: table.id, row: rIndex, col: cIndex, x: x, y: y, w: pW, h: pH });
+                    }
+                });
+            });
+
+                // Wires
+                for (let sId in connectionPoints) {
+                    const points = connectionPoints[sId]; points.sort((a, b) => a.num - b.num);
+                    if(points.length > 1) {
+                        ctx.beginPath(); ctx.strokeStyle = points[0].color; ctx.lineWidth = 3; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+                        ctx.moveTo(points[0].x, points[0].y);
+                        for(let i=1; i<points.length; i++) {
+                            if(points[i].num === points[i-1].num + 1) ctx.lineTo(points[i].x, points[i].y);
+                            else ctx.moveTo(points[i].x, points[i].y);
+                        }
+                        ctx.stroke();
+                    }
+                    points.forEach(p => {
+                        ctx.beginPath(); ctx.fillStyle = '#fff'; ctx.arc(p.x, p.y, 3, 0, Math.PI*2); ctx.fill(); ctx.strokeStyle = '#333'; ctx.lineWidth = 1; ctx.stroke();
+                    });
+                }
+            });
+
+            // Draw Inverters
+            const invY = data.worldH + 20;
+            ctx.fillStyle = '#333'; ctx.font = 'bold 16px sans-serif'; ctx.textAlign = 'left';
+            ctx.fillText("Inverters", DRAW_OPTS.tableMargin, invY - 10);
+            
+            const invW = Math.max(100, (data.worldW - DRAW_OPTS.tableMargin) / state.inverters - 10);
+            
+            // Dynamic height based on content
+        const baseInvH = 60;
+        const rowH = 14;
+
+        data.inverters.forEach((inv, i) => {
+            // Calculate height needed
+            let lineCount = 0;
+            inv.mppts.forEach(m => {
+                if (m.strings.length > 0) lineCount += (1 + m.strings.length); // Header + strings
+            });
+            const h = Math.max(100, baseInvH + (lineCount * rowH));
+
+            const x = DRAW_OPTS.tableMargin + i*(invW + 10);
+            ctx.fillStyle = '#fff'; ctx.strokeStyle = '#666'; ctx.lineWidth = 1;
+            ctx.fillRect(x, invY, invW, h); ctx.strokeRect(x, invY, invW, h);
+
+            ctx.fillStyle = '#333'; ctx.textAlign = 'center'; ctx.font = 'bold 11px sans-serif';
+            ctx.fillText(`Inv ${inv.id}`, x + invW/2, invY + 15);
+            ctx.font = '10px sans-serif'; ctx.fillText(`${inv.totalPanels} Pnls`, x + invW/2, invY + 28);
+
+            let curY = invY + 45;
+            ctx.textAlign = 'left';
+
+            inv.mppts.forEach(m => {
+                if (m.strings.length === 0) return;
+                // MPPT Header
+                ctx.fillStyle = '#eee'; ctx.fillRect(x+2, curY - 10, invW-4, rowH);
+                ctx.fillStyle = '#555'; ctx.font = 'bold 9px sans-serif';
+                ctx.fillText(`MPPT ${m.id} (${m.dir || '-'})`, x+5, curY);
+                curY += rowH;
+
+                // Strings
+                m.strings.forEach(s => {
+                    ctx.fillStyle = s.color; ctx.fillRect(x+10, curY-7, 8, 8);
+                    ctx.fillStyle = '#000'; ctx.font = '9px sans-serif';
+                    ctx.fillText(`S${s.id} (${s.type})`, x+22, curY);
+                    curY += rowH;
+                });
+            });
+        });
+
+            ctx.restore();
+        }
+
+        // --- INTERACTION HANDLERS ---
+        canvas.addEventListener('click', (e) => {
+            if (view.isDragging) return; // Ignore click if dragging
+
+            const rect = canvas.getBoundingClientRect();
+            // Convert to World Coords
+            const mouseX = (e.clientX - rect.left - view.x) / view.scale;
+            const mouseY = (e.clientY - rect.top - view.y) / view.scale;
+
+            // 1. Cell Click (Higher priority)
+            for(let i = clickZones.length - 1; i >= 0; i--) {
+                const zone = clickZones[i];
+                if (zone.type === 'cell') {
+                    if(mouseX >= zone.x && mouseX <= zone.x+zone.w && mouseY >= zone.y && mouseY <= zone.y+zone.h) {
+                        toggleMaskCell(zone.id, zone.row, zone.col);
+                        return;
+                    }
+                }
+            }
+            // 2. Array Click (Background of array)
+            for(let i = clickZones.length - 1; i >= 0; i--) {
+                const zone = clickZones[i];
+                if (zone.type === 'array') {
+                    if(mouseX >= zone.x && mouseX <= zone.x+zone.w && mouseY >= zone.y && mouseY <= zone.y+zone.h) {
+                        selectArray(zone.id);
+                        return;
+                    }
+                }
+            }
+        });
+
+        canvas.addEventListener('mousemove', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = (e.clientX - rect.left - view.x) / view.scale;
+            const mouseY = (e.clientY - rect.top - view.y) / view.scale;
+
+            // Hover effects logic
+            let cursor = 'default';
+            if (view.isDragging) cursor = 'grabbing';
+            else {
+                for(let zone of clickZones) {
+                    if (zone.type === 'cell' && mouseX >= zone.x && mouseX <= zone.x+zone.w && mouseY >= zone.y && mouseY <= zone.y+zone.h) {
+                        cursor = 'crosshair'; break;
+                    }
+                    if (zone.type === 'array' && mouseX >= zone.x && mouseX <= zone.x+zone.w && mouseY >= zone.y && mouseY <= zone.y+zone.h) {
+                        if (cursor !== 'crosshair') cursor = 'pointer';
+                    }
+                }
+            }
+            canvas.style.cursor = cursor;
+            
+            // Tooltip
+            let hit = false;
+            if (!view.isDragging) {
+                for(let zone of interactiveZones) {
+                    if(mouseX >= zone.x && mouseX <= zone.x+zone.w && mouseY >= zone.y && mouseY <= zone.y+zone.h) {
+                        const tooltip = document.getElementById('tooltip');
+                        tooltip.style.display = 'block';
+                        tooltip.style.left = (e.clientX + 10) + 'px';
+                        tooltip.style.top = (e.clientY + 10) + 'px';
+                        tooltip.innerHTML = `S${zone.info.stringId} (${zone.info.stringType}) | P${zone.info.panelNum}`;
+                        hit = true; break;
+                    }
+                }
+            }
+            if(!hit) document.getElementById('tooltip').style.display = 'none';
+        });
+
+        // Save / Load logic (same as previous)
+        function saveConfig() {
+            const exportData = { ...state, tables: Array.from(state.tables.entries()), selectedId: null };
+            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(exportData, null, 2));
+            const node = document.createElement('a'); node.setAttribute("href", dataStr); node.setAttribute("download", "solar_layout.json");
+            document.body.appendChild(node); node.click(); node.remove();
+        }
+        function loadConfig(input) {
+            const file = input.files[0]; if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const imported = JSON.parse(e.target.result);
+                    state.nextId = imported.nextId || 100;
+                    state.stringTypes = imported.stringTypes || []; 
+                    state.inverters = imported.inverters || 10;
+                    state.selectedId = null; 
+                    state.tables = new Map(imported.tables);
+                    document.getElementById('inp_inverters').value = state.inverters;
+                    document.getElementById('inp_mppts').value = state.mpptCount || 2;
+                    document.getElementById('inp_spm').value = state.stringsPerMppt || 2;
+                    document.getElementById('chk_cross_group').checked = state.allowCrossGroup;
+                    renderUI(); autoFitView();
+                    saveToLocal();
+                } catch (err) { alert("Error loading JSON: " + err); }
+            }; reader.readAsText(file); input.value = '';
+        }
+
+        function clearAll() {
+            if(confirm('Are you sure you want to clear all arrays?')) {
+                state.tables.clear();
+                state.selectedId = null;
+                renderUI();
+                draw();
+                calculateMaterials();
+                saveToLocal();
+            }
+        }
+
+        init();
+
+        function generateMaterialSummary(tablesList) {
+        const maxP = parseInt(document.getElementById('mat_ppr').value) || 4;
+        const rpp = parseInt(document.getElementById('mat_rpp').value) || 2; 
+        const lpr = parseInt(document.getElementById('mat_lpr').value) || 2;
+
+        let totE = 0, totM = 0, totC = 0, totR = 0, totL = 0;
+        let html = '<table style="width:100%;font-size:13px;border-collapse:collapse; text-align:center;">' + 
+                   '<tr style="background:#eee;text-align:center;height:30px;"><th style="text-align:left;padding-left:5px;">Array</th><th>Rails (Qty)</th><th>L-Feet</th><th>Ends</th><th>Mids</th><th>Conn</th></tr>';
+
+        tablesList.forEach((t) => {
+            if (!t.mask) return;
+            const dir = t.railDir || 'row';
+
+            let tE = 0, tM = 0, tC = 0, tR = 0;
+            let segs = [];
+
+            if (dir === 'row') {
+                for (let r = 0; r < t.mask.length; r++) {
+                    let len = 0;
+                    for (let c = 0; c < t.mask[r].length; c++) {
+                        if (t.mask[r][c] === 1) len++;
+                        else if (len > 0) { segs.push(len); len = 0; }
+                    }
+                    if (len > 0) segs.push(len);
+                }
+            } else {
+                const rows = t.mask.length;
+                const cols = t.mask[0].length;
+                for (let c = 0; c < cols; c++) {
+                    let len = 0;
+                    for (let r = 0; r < rows; r++) {
+                        if (t.mask[r][c] === 1) len++;
+                        else if (len > 0) { segs.push(len); len = 0; }
+                    }
+                    if (len > 0) segs.push(len);
+                }
+            }
+
+            segs.forEach(l => {
+                // Sum exact rail usage (e.g. 1.25 lengths * 2 rails = 2.5 rails)
+                const railsForSeg = (l / maxP) * rpp;
+                tR += railsForSeg;
+
+                tE += 2 * rpp;
+                if (l > 1) tM += (l - 1) * rpp;
+
+                // Connectors are based on physical joins, so we still consider ceiling for splice count
+                const nRailsInLine = Math.ceil(l / maxP);
+                if (nRailsInLine > 1) tC += (nRailsInLine - 1) * rpp;
+            });
+
+            tR = Math.ceil(tR); // Round up final rail count for purchasing
+            const tL = tR * lpr;
+
+            totE += tE; totM += tM; totC += tC; totR += tR; totL += tL;
+            html += `<tr style="border-bottom:1px solid #eee; height:25px;">
+                        <td style="text-align:left;padding-left:5px;">${t.name}</td>
+                        <td>${tR}</td>
+                        <td>${tL}</td>
+                        <td>${tE}</td>
+                        <td>${tM}</td>
+                        <td>${tC}</td>
+                     </tr>`;
+        });
+
+        html += `<tr style="font-weight:bold;border-top:2px solid #ccc;background:#f9f9f9; height:35px;">
+                    <td style="text-align:left;padding-left:5px;">TOTAL</td>
+                    <td>${totR}</td>
+                    <td>${totL}</td>
+                    <td>${totE}</td>
+                    <td>${totM}</td>
+                    <td>${totC}</td>
+                 </tr></table>`;
+        return html;
+    }
+
+        function calculateMaterials() {
+            // UI Update version uses all tables
+            const html = generateMaterialSummary(Array.from(state.tables.values()));
+            const container = document.getElementById('material_summary_content');
+            if(container) container.innerHTML = html;
+        }
+
+        function showMaterialModal() {
+            calculateMaterials();
+            document.getElementById('mat_modal').style.display = 'flex';
+        }
+        function closeMatModal() {
+            document.getElementById('mat_modal').style.display = 'none';
+        }
+
+        // --- SIDEBAR LOGIC ---
+        let activePanelId = null;
+
+        function togglePanel(panelName) {
+            const drawer = document.getElementById('main_drawer');
+            const targetId = 'panel_' + panelName;
+            const targetContent = document.getElementById(targetId);
+            const btn = document.getElementById('btn_' + panelName);
+
+            document.querySelectorAll('.sidebar-btn').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.panel-content').forEach(p => p.classList.remove('active'));
+
+            if (activePanelId === targetId) {
+                drawer.classList.remove('open');
+                activePanelId = null;
+            } else {
+                drawer.classList.add('open');
+                targetContent.classList.add('active');
+                btn.classList.add('active');
+                activePanelId = targetId;
+            }
+        }
+
+        // --- PRINT LOGIC ---
+        function openPrintModal() {
+            const container = document.getElementById('print_list_container');
+            container.innerHTML = '';
+            
+            const arrays = Array.from(state.tables.values()).sort((a,b) => {
+                 if(a.group !== b.group) return a.group.localeCompare(b.group);
+                 return a.name.localeCompare(b.name);
+            });
+
+            let lastGroup = null;
+            arrays.forEach(t => {
+                if (t.group !== lastGroup) {
+                    const grp = document.createElement('div');
+                    grp.className = 'print-group-header';
+                    grp.innerText = t.group;
+                    container.appendChild(grp);
+                    lastGroup = t.group;
+                }
+                const item = document.createElement('div');
+                item.className = 'print-item';
+                item.innerHTML = `<input type="checkbox" id="pchk_${t.id}" value="${t.id}" checked> <label for="pchk_${t.id}">${t.name}</label>`;
+                container.appendChild(item);
+            });
+
+            document.getElementById('print_modal').style.display = 'flex';
+        }
+
+        function togglePrintChecks(checked) {
+            document.querySelectorAll('#print_list_container input[type="checkbox"]').forEach(c => c.checked = checked);
+        }
+
+        function confirmPrint() {
+            const checkboxes = document.querySelectorAll('#print_list_container input[type="checkbox"]:checked');
+            if (checkboxes.length === 0) { alert("Please select at least one array."); return; }
+            
+            const ids = Array.from(checkboxes).map(c => parseInt(c.value));
+            document.getElementById('print_modal').style.display = 'none';
+            printLayout(ids);
+        }
+
+        function drawTableToContext(ctx, table, offsetX, offsetY) {
+        // Draw Name
+        ctx.fillStyle = '#333';
+        ctx.font = 'bold 16px sans-serif';
+        ctx.textAlign = 'left';
+        const dirLabel = table.slopeDir ? `(${table.slopeDir})` : '(S)';
+        ctx.fillText(`${table.name} ${dirLabel}`, offsetX, offsetY - 10);
+
+        // Draw Panels
+        const pOffsetX = 0; 
+        const pOffsetY = 0; 
+
+        const isVert = table.railDir === 'col';
+        const pW = isVert ? DRAW_OPTS.panelHeight : DRAW_OPTS.panelWidth;
+        const pH = isVert ? DRAW_OPTS.panelWidth : DRAW_OPTS.panelHeight;
+
+        let connectionPoints = {};
+
+        table.grid.forEach((row, rIndex) => {
+            row.forEach((panel, cIndex) => {
+                const x = offsetX + pOffsetX + (cIndex * (pW + DRAW_OPTS.gapX));
+                const y = offsetY + pOffsetY + (rIndex * (pH + DRAW_OPTS.gapY));
+                const isMaskActive = table.mask[rIndex] && table.mask[rIndex][cIndex] === 1;
+
+                if (panel) {
+                    // Fill
+                    ctx.fillStyle = panel.lightColor; 
+                    ctx.fillRect(x, y, pW, pH);
+                    // Stroke
+                    ctx.strokeStyle = panel.color; 
+                    ctx.lineWidth = 2; 
+                    ctx.strokeRect(x, y, pW, pH);
+                    // Text
+                    ctx.fillStyle = '#000'; ctx.textAlign = 'center'; ctx.font = '9px sans-serif';
+                    ctx.fillText(`S${panel.stringId}`, x + pW/2, y + pH/2 - 4);
+                    ctx.font = 'bold 9px sans-serif'; 
+                    ctx.fillText(panel.panelNum, x + pW/2, y + pH/2 + 7);
+
+                    if(!connectionPoints[panel.stringId]) connectionPoints[panel.stringId] = [];
+                    connectionPoints[panel.stringId].push({ x: x + pW/2, y: y + pH/2, num: panel.panelNum, color: panel.color });
+                } else if (!isMaskActive) {
+                    ctx.fillStyle = '#f9fafb'; ctx.fillRect(x, y, pW, pH);
+                    ctx.strokeStyle = '#eee'; ctx.lineWidth = 1;
+                    ctx.setLineDash([2, 2]); ctx.strokeRect(x, y, pW, pH); ctx.setLineDash([]);
+                } else {
+                    ctx.fillStyle = '#fff'; ctx.fillRect(x, y, pW, pH);
+                    ctx.strokeStyle = '#ddd'; ctx.lineWidth = 1; ctx.strokeRect(x, y, pW, pH);
+                }
+            });
+        });
+
+            // Draw Wires (Overlay)
+            for (let sId in connectionPoints) {
+                const points = connectionPoints[sId]; points.sort((a, b) => a.num - b.num);
+                if(points.length > 1) {
+                    ctx.beginPath(); ctx.strokeStyle = points[0].color; ctx.lineWidth = 3; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+                    ctx.moveTo(points[0].x, points[0].y);
+                    for(let i=1; i<points.length; i++) {
+                        if(points[i].num === points[i-1].num + 1) ctx.lineTo(points[i].x, points[i].y);
+                        else ctx.moveTo(points[i].x, points[i].y);
+                    }
+                    ctx.stroke();
+                }
+                points.forEach(p => {
+                    ctx.beginPath(); ctx.fillStyle = '#fff'; ctx.arc(p.x, p.y, 3, 0, Math.PI*2); ctx.fill(); ctx.strokeStyle = '#333'; ctx.lineWidth = 1; ctx.stroke();
+                });
+            }
+        }
+
+        function printLayout(selectedIds) {
+        const fullData = generateData(); 
+        const idSet = new Set(selectedIds);
+        const filteredTables = fullData.tables.filter(t => idSet.has(t.id));
+
+        // Group by Group Name
+        const groups = {};
+        filteredTables.forEach(t => {
+            if(!groups[t.group]) groups[t.group] = [];
+            groups[t.group].push(t);
+        });
+
+        const snapshots = [];
+        const PAGE_WIDTH = 1100;
+        const PADDING = 40;
+
+        for (let grpName in groups) {
+            const groupTables = groups[grpName];
+
+            let curX = PADDING, curY = PADDING, rowH = 0, maxW = 0;
+
+            groupTables.forEach(t => {
+                const isVert = t.railDir === 'col';
+                const pW = isVert ? DRAW_OPTS.panelHeight : DRAW_OPTS.panelWidth;
+                const pH = isVert ? DRAW_OPTS.panelWidth : DRAW_OPTS.panelHeight;
+
+                const w = (t.bounds.cols * (pW + DRAW_OPTS.gapX));
+                const h = (t.bounds.rows * (pH + DRAW_OPTS.gapY)) + 30;
+
+                if (curX + w > PAGE_WIDTH && curX > PADDING) { 
+                    curX = PADDING; curY += rowH + 50; rowH = 0;
+                }
+                t.printX = curX; t.printY = curY;
+                curX += w + 40; rowH = Math.max(rowH, h); maxW = Math.max(maxW, curX);
+            });
+
+            const totalH = curY + rowH + PADDING;
+            const totalW = Math.max(maxW, PAGE_WIDTH * 0.5);
+
+            const tCanvas = document.createElement('canvas');
+            const scale = 2; 
+            tCanvas.width = totalW * scale; tCanvas.height = totalH * scale;
+            const ctx = tCanvas.getContext('2d');
+            ctx.scale(scale, scale); ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, totalW, totalH);
+
+            groupTables.forEach(t => {
+                drawTableToContext(ctx, t, t.printX, t.printY + 25);
+            });
+
+            snapshots.push({ title: grpName, img: tCanvas.toDataURL('image/png') });
+        }
+
+        const selectedConfigTables = selectedIds.map(id => state.tables.get(id)).filter(t => t);
+        const matContent = generateMaterialSummary(selectedConfigTables);
+
+        // --- Generate Inverter Schedule ---
+        let invContent = '<table style="width:100%; border-collapse:collapse; font-size:11px;"><thead><tr style="background:#f3f4f6;"><th style="border:1px solid #ddd; padding:6px; text-align:left;">Inverter</th><th style="border:1px solid #ddd; padding:6px;">MPPT</th><th style="border:1px solid #ddd; padding:6px;">Orientation</th><th style="border:1px solid #ddd; padding:6px; text-align:left;">Strings Assigned</th></tr></thead><tbody>';
+
+        fullData.inverters.forEach(inv => {
+            const usedMppts = inv.mppts.filter(m => m.strings.length > 0);
+            if (usedMppts.length === 0) return;
+
+            usedMppts.forEach((m, idx) => {
+                invContent += '<tr>';
+                if(idx === 0) {
+                    invContent += `<td rowspan="${usedMppts.length}" style="border:1px solid #ddd; padding:6px; vertical-align:top; background:#fff; font-weight:bold;">Inv ${inv.id} <div style="font-weight:normal;color:#666;font-size:10px;">${inv.totalPanels} Panels</div></td>`;
+                }
+                invContent += `<td style="border:1px solid #ddd; padding:6px; text-align:center;">${m.id}</td>`;
+                invContent += `<td style="border:1px solid #ddd; padding:6px; text-align:center;">${m.dir || '-'}</td>`;
+
+                const strTags = m.strings.map(s => 
+                    `<span style="display:inline-flex; align-items:center; border:1px solid #ddd; background:#fafafa; padding:2px 6px; margin:2px; border-radius:10px;"><span style="display:block; width:8px; height:8px; background:${s.color}; border-radius:50%; margin-right:4px;"></span><b>S${s.id}</b>&nbsp;<span style="color:#666; font-size:10px;">(${s.type})</span></span>`
+                ).join(' ');
+                invContent += `<td style="border:1px solid #ddd; padding:6px;">${strTags}</td></tr>`;
+            });
+        });
+        invContent += '</tbody></table>';
+
+
+        const win = window.open('', '_blank');
+        let htmlContent = `
+            <!DOCTYPE html>
+            <html><head><title>Solar Layout Report</title><style>
+                body { font-family: 'Segoe UI', sans-serif; padding: 20px; color: #333; -webkit-print-color-adjust: exact; }
+                h1 { border-bottom: 2px solid #333; padding-bottom: 10px; }
+                .meta { font-size: 12px; color: #666; margin-bottom: 30px; }
+                .print-section { margin-bottom: 40px; page-break-inside: avoid; break-inside: avoid; border: 1px solid transparent; }
+                .section-header { background: #f0f2f5; padding: 8px; font-size: 14px; border-left: 4px solid #3b82f6; margin-bottom: 10px; page-break-after: avoid; break-after: avoid; }
+                .img-container { text-align: center; border: 1px solid #eee; padding: 10px; background: #fff; }
+                img { max-width: 100%; height: auto; max-height: 95vh; }
+                table { width: 100%; border-collapse: collapse; font-size: 11px; }
+                th, td { border: 1px solid #ddd; padding: 6px; text-align: center; }
+                th { background: #f9f9f9; }
+                td:first-child { text-align: left; }
+                @media print { body { padding: 0; margin: 10mm; } .force-break { page-break-before: always; } }
+            </style></head><body>
+                <h1>Solar Layout Report</h1>
+                <div class="meta">Generated: ${new Date().toLocaleString()}</div>
+
+                <div class="print-section">
+                    <h2>Material Estimates</h2>
+                    ${matContent}
+                </div>
+
+                <div class="print-section">
+                    <h2>Inverter Schedule</h2>
+                    ${invContent}
+                </div>
+
+                <div class="force-break"></div> `;
+
+        snapshots.forEach(shot => {
+            htmlContent += `
+                <div class="print-section">
+                    <div class="section-header">${shot.title}</div>
+                    <div class="img-container"><img src="${shot.img}"></div>
+                </div>`;
+        });
+        htmlContent += `</body></html>`;
+
+        win.document.write(htmlContent); win.document.close(); win.focus();
+        setTimeout(() => { win.print(); win.close(); }, 500);
+    }
+    </script>
+</body>
+</html>
