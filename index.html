@@ -189,12 +189,22 @@
                     <input type="number" id="inp_inverters" value="10" min="1" onchange="updateInverterConfig('count', this.value)">
                 </div>
                 <div class="input-group" style="flex:1">
+                    <label>Cap (W)</label>
+                    <input type="number" id="inp_inv_cap" value="10000" min="0" step="100" onchange="updateInverterConfig('cap', this.value)">
+                </div>
+            </div>
+            <div class="props-row">
+                <div class="input-group" style="flex:1">
                     <label>MPPTs/Inv</label>
                     <input type="number" id="inp_mppts" value="2" min="1" onchange="updateInverterConfig('mppt', this.value)">
                 </div>
                 <div class="input-group" style="flex:1">
                     <label>Str/MPPT</label>
                     <input type="number" id="inp_spm" value="2" min="1" onchange="updateInverterConfig('spm', this.value)">
+                </div>
+                <div class="input-group" style="flex:1">
+                    <label>Panel (W)</label>
+                    <input type="number" id="inp_panel_w" value="400" min="0" step="5" onchange="updateInverterConfig('watts', this.value)">
                 </div>
             </div>
         </div>
@@ -320,15 +330,17 @@
 
         // --- APP STATE ---
         let state = {
-            tables: new Map(), // Key: ID (int)
+            tables: new Map(),
             nextId: 1,
             stringTypes: [
                 { id: 1, count: 13, size: 8 },
                 { id: 2, count: 7, size: 9 }
             ],
             inverters: 10,
+            inverterCapacity: 10000,
             mpptCount: 2,
             stringsPerMppt: 2,
+            panelWatts: 400,
             allowCrossGroup: true,
             strictOrient: false,
             selectedId: null 
@@ -380,8 +392,10 @@
                     state.nextId = imported.nextId || 100;
                     state.stringTypes = imported.stringTypes || []; 
                     state.inverters = imported.inverters || 10;
+                    state.inverterCapacity = imported.inverterCapacity || 10000;
                     state.mpptCount = imported.mpptCount || 2;
                     state.stringsPerMppt = imported.stringsPerMppt || 2;
+                    state.panelWatts = imported.panelWatts || 400;
                     state.allowCrossGroup = (imported.allowCrossGroup !== undefined) ? imported.allowCrossGroup : true;
                     state.strictOrient = (imported.strictOrient !== undefined) ? imported.strictOrient : false;
                     state.tables = new Map(imported.tables);
@@ -411,8 +425,10 @@
             }
 
             document.getElementById('inp_inverters').value = state.inverters;
+            document.getElementById('inp_inv_cap').value = state.inverterCapacity;
             document.getElementById('inp_mppts').value = state.mpptCount;
             document.getElementById('inp_spm').value = state.stringsPerMppt;
+            document.getElementById('inp_panel_w').value = state.panelWatts;
             document.getElementById('chk_cross_group').checked = state.allowCrossGroup;
             document.getElementById('chk_strict_orient').checked = state.strictOrient;
             window.addEventListener('resize', handleResize);
@@ -420,7 +436,6 @@
             
             setTimeout(() => { handleResize(); autoFitView(); }, 100);
         }
-
         function saveToLocal() {
             const exportData = { ...state, tables: Array.from(state.tables.entries()), selectedId: null };
             localStorage.setItem('solar_layout_cfg', JSON.stringify(exportData));
@@ -697,10 +712,12 @@
         function removeString(index) { state.stringTypes.splice(index, 1); renderStringList(); draw(); saveToLocal(); }
         function updateString(index, f, v) { state.stringTypes[index][f] = parseInt(v) || 0; draw(); saveToLocal(); }
         function updateInverterConfig(key, val) {
-            const v = parseInt(val) || 1;
-            if (key === 'count') state.inverters = v;
-            if (key === 'mppt') state.mpptCount = v;
-            if (key === 'spm') state.stringsPerMppt = v;
+            const v = parseInt(val) || 0;
+            if (key === 'count') state.inverters = Math.max(1, v);
+            if (key === 'cap') state.inverterCapacity = v;
+            if (key === 'mppt') state.mpptCount = Math.max(1, v);
+            if (key === 'spm') state.stringsPerMppt = Math.max(1, v);
+            if (key === 'watts') state.panelWatts = v;
             draw(); saveToLocal();
         }
 
@@ -909,83 +926,70 @@
         tablesData.forEach(t => {
             t.grid.forEach(r => r.forEach(p => {
                 if(p) {
-                    // If a string spans multiple directions, first one wins (simplified)
                     if (!stringDirMap.has(p.stringId)) stringDirMap.set(p.stringId, t.slopeDir || 'S');
                 }
             }));
         });
 
-        // 2. Prepare Inverters & MPPTs
         let inverters = [];
         for(let k=0; k<state.inverters; k++) {
             let mppts = [];
-            for(let m=0; m<state.mpptCount; m++) mppts.push({ id: m+1, strings: [], capacity: state.stringsPerMppt, dir: null });
-            inverters.push({ id: k+1, mppts: mppts, totalPanels: 0 });
+            for(let m=0; m<state.mpptCount; m++) mppts.push({ id: m+1, strings: [], capacity: state.stringsPerMppt, dir: null, curWatts: 0 });
+            inverters.push({ id: k+1, mppts: mppts, totalPanels: 0, curWatts: 0 });
         }
 
-        // 3. Group Strings by Direction
-        // Only use strings that are actually placed (or all if we want to include spares, but spares have no direction)
-        // Let's include all strings, treating unplaced as 'Unknown' direction
-        const stringsByDir = {};
-        [...strings].sort((a,b) => b.size - a.size).forEach(s => {
+        const activeStrings = [];
+        const seenIds = new Set();
+        tablesData.forEach(t => {
+            t.grid.forEach(r => r.forEach(p => {
+                if(p && !seenIds.has(p.stringId)) {
+                    seenIds.add(p.stringId);
+                    const s = strings.find(x => x.id === p.stringId);
+                    if(s) activeStrings.push(s);
+                }
+            }));
+        });
+        
+        activeStrings.sort((a,b) => b.size - a.size);
+
+        activeStrings.forEach(s => {
             const dir = stringDirMap.get(s.id) || 'Unassigned';
-            if(!stringsByDir[dir]) stringsByDir[dir] = [];
-            stringsByDir[dir].push(s);
+            const watts = s.size * (state.panelWatts || 0);
+            
+            let candidates = [];
+            inverters.forEach(inv => {
+                inv.mppts.forEach(m => {
+                    if(m.strings.length < m.capacity) {
+                        if(m.dir === null || m.dir === dir) {
+                            candidates.push({ inv, mppt: m, mixed: false });
+                        } else {
+                            candidates.push({ inv, mppt: m, mixed: true });
+                        }
+                    }
+                });
+            });
+
+            candidates.sort((a,b) => {
+                if (a.mixed !== b.mixed) return a.mixed ? 1 : -1;
+                if (a.inv.curWatts !== b.inv.curWatts) return a.inv.curWatts - b.inv.curWatts;
+                return a.mppt.strings.length - b.mppt.strings.length;
+            });
+
+            const best = candidates[0];
+            if (best) {
+                best.mppt.strings.push(s);
+                if (best.mppt.dir === null) best.mppt.dir = dir;
+                else if (best.mppt.dir !== dir) best.mppt.dir = 'Mixed';
+                
+                best.inv.totalPanels += s.size;
+                best.inv.curWatts += watts;
+                best.mppt.curWatts += watts;
+            }
         });
 
-        // 4. Distribute
-        // Strategy: Fill MPPTs with same direction
-        Object.keys(stringsByDir).forEach(dir => {
-            const group = stringsByDir[dir];
-            group.forEach(str => {
-                let allocated = false;
-
-                // Pass 1: Find MPPT already assigned to this Dir with space
-                for (let inv of inverters) {
-                    for (let mppt of inv.mppts) {
-                        if (mppt.dir === dir && mppt.strings.length < mppt.capacity) {
-                            mppt.strings.push(str);
-                            inv.totalPanels += str.size;
-                            allocated = true;
-                            break;
-                        }
-                    }
-                    if (allocated) break;
-                }
-
-                // Pass 2: Find Empty MPPT
-                if (!allocated) {
-                    for (let inv of inverters) {
-                        for (let mppt of inv.mppts) {
-                            if (mppt.dir === null) {
-                                mppt.dir = dir;
-                                mppt.strings.push(str);
-                                inv.totalPanels += str.size;
-                                allocated = true;
-                                break;
-                            }
-                        }
-                        if (allocated) break;
-                    }
-                }
-
-                // Pass 3: Fallback (mix directions if full)
-                if (!allocated) {
-                    for (let inv of inverters) {
-                        for (let mppt of inv.mppts) {
-                            if (mppt.strings.length < mppt.capacity) {
-                                mppt.strings.push(str);
-                                inv.totalPanels += str.size;
-                                // Mark as mixed?
-                                if(mppt.dir !== dir) mppt.dir = 'Mixed'; 
-                                allocated = true;
-                                break;
-                            }
-                        }
-                        if (allocated) break;
-                    }
-                }
-            });
+        inverters.forEach(inv => {
+            inv.mppts.sort((a, b) => b.strings.length - a.strings.length);
+            inv.mppts.forEach((m, i) => m.id = i + 1);
         });
 
         return { tables: tablesData, inverters, worldW: layoutMaxW, worldH: layoutMaxH };
