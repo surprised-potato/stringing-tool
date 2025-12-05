@@ -58,6 +58,12 @@
         .btn { padding: 6px 12px; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; color: white; transition: background 0.2s; }
         .btn:hover { opacity: 0.9; }
         .btn-add { background-color: #10b981; }
+        
+        .tool-group { background:#fff; border:1px solid #ccc; border-radius:4px; display:flex; margin-right:10px; overflow:hidden; }
+        .btn-tool { border:none; background:none; padding:6px 12px; cursor:pointer; font-size:16px; color:#555; transition:background 0.1s; }
+        .btn-tool:hover { background: #f0f0f0; }
+        .btn-tool.active { background-color: #e0f2fe; color: #0284c7; box-shadow:inset 0 2px 4px rgba(0,0,0,0.05); }
+        .btn-tool + .btn-tool { border-left:1px solid #eee; }
         .btn-danger { background-color: #ef4444; }
         .btn-blue { background-color: #3b82f6; }
         .btn-gray { background-color: #6b7280; }
@@ -121,6 +127,12 @@
                                 <option value="trap">Trapezoid</option>
                             </select>
                         </div>
+                        <div class="input-group" style="width:60px">
+                            <label>Rot (°)</label>
+                            <input type="number" id="prop_rot" value="0" step="5" onchange="updateSelectedProp('rot', this.value)">
+                        </div>
+                    </div>
+                    <div class="props-row">
                         <div class="input-group" style="flex:1">
                         <label>Rail Dir</label>
                         <select id="prop_rail_dir" onchange="updateSelectedProp('railDir', this.value)">
@@ -212,6 +224,21 @@
     <div id="panel_algo" class="panel-content">
         <div class="panel-header"><h2>Fill Algorithm</h2></div>
         <div style="padding-top:15px;">
+            <div class="input-group" style="margin-bottom:10px;">
+                <label>Strategy</label>
+                <select id="sel_fill_algo" style="width:100%" onchange="updateAlgo('fillAlgorithm', this.value)">
+                    <option value="linear">Linear (Sequential)</option>
+                    <option value="proximity">Proximity (Nearest)</option>
+                </select>
+            </div>
+            <div class="input-group" style="margin-bottom:15px;">
+                <label>Fill Start Position</label>
+                <select id="sel_fill_order" style="width:100%" onchange="updateAlgo('fillOrder', this.value)">
+                    <option value="top">Top (Screen Top)</option>
+                    <option value="bottom">Bottom (Screen Bottom)</option>
+                </select>
+            </div>
+
             <div class="input-group" style="flex-direction:row; align-items:center; gap:10px;">
                 <input type="checkbox" id="chk_cross_group" style="width:auto;" onchange="updateAlgo('crossGroup', this.checked)">
                 <label style="margin:0; font-size:13px; font-weight:normal; cursor:pointer;" for="chk_cross_group">Allow Strings to Cross Groups</label>
@@ -227,6 +254,10 @@
             <div style="font-size:11px; color:#666; margin-top:5px; margin-left:24px;">
                 If checked, strings will be cut off when moving between arrays with different Slope Directions (e.g. South to West), even within the same group.
             </div>
+
+            <hr style="border:0; border-top:1px solid #eee; margin:15px 0;">
+            <button class="btn btn-blue" style="width:100%" onclick="runOptimization()">Optimize String Order</button>
+            <div id="opt_result" style="font-size:11px; color:#666; margin-top:5px; text-align:center; min-height:15px;"></div>
         </div>
     </div>
 
@@ -256,6 +287,12 @@
     </div>
 
     <div class="top-actions">
+        <div class="tool-group">
+            <button class="btn-tool active" id="btn_tool_move" onclick="setTool('move')" title="Move/Select Tool">✥</button>
+            <button class="btn-tool" id="btn_tool_pan" onclick="setTool('pan')" title="Pan Tool">✋</button>
+            <div style="width:1px; background:#eee;"></div>
+            <button class="btn-tool" id="btn_snap" onclick="toggleSnap()" title="Snap to Grid (20px)">⧉</button>
+        </div>
         <button class="btn btn-danger" onclick="clearAll()">Clear All</button>
         <button class="btn btn-blue" onclick="saveConfig()">Save</button>
         <button class="btn btn-gray" onclick="document.getElementById('file_loader').click()">Load</button>
@@ -341,9 +378,13 @@
             mpptCount: 2,
             stringsPerMppt: 2,
             panelWatts: 400,
+            fillOrder: 'top',
+            fillAlgorithm: 'linear',
             allowCrossGroup: true,
             strictOrient: false,
-            selectedId: null 
+            snapToGrid: false,
+            selectedId: null,
+            stringPermutation: null
         };
 
         // --- HELPER: MASK GENERATION ---
@@ -395,7 +436,10 @@
                     state.inverterCapacity = imported.inverterCapacity || 10000;
                     state.mpptCount = imported.mpptCount || 2;
                     state.stringsPerMppt = imported.stringsPerMppt || 2;
+                    state.stringsPerMppt = imported.stringsPerMppt || 2;
                     state.panelWatts = imported.panelWatts || 400;
+                    state.fillOrder = imported.fillOrder || 'top';
+                    state.fillAlgorithm = imported.fillAlgorithm || 'linear';
                     state.allowCrossGroup = (imported.allowCrossGroup !== undefined) ? imported.allowCrossGroup : true;
                     state.strictOrient = (imported.strictOrient !== undefined) ? imported.strictOrient : false;
                     state.tables = new Map(imported.tables);
@@ -429,6 +473,14 @@
             document.getElementById('inp_mppts').value = state.mpptCount;
             document.getElementById('inp_spm').value = state.stringsPerMppt;
             document.getElementById('inp_panel_w').value = state.panelWatts;
+            document.getElementById('sel_fill_order').value = state.fillOrder;
+            document.getElementById('sel_fill_algo').value = state.fillAlgorithm;
+            
+            // Init UI State
+            const algoDisabled = (state.fillAlgorithm === 'proximity');
+            document.getElementById('sel_fill_order').disabled = algoDisabled;
+            document.getElementById('sel_fill_order').style.opacity = algoDisabled ? '0.5' : '1';
+
             document.getElementById('chk_cross_group').checked = state.allowCrossGroup;
             document.getElementById('chk_strict_orient').checked = state.strictOrient;
             window.addEventListener('resize', handleResize);
@@ -612,6 +664,7 @@
                 document.getElementById('prop_name').value = data.name;
                 document.getElementById('prop_group').value = data.group;
                 document.getElementById('prop_shape').value = data.type;
+                document.getElementById('prop_rot').value = data.rot || 0;
                 document.getElementById('prop_rail_dir').value = data.railDir || 'row';
                 document.getElementById('prop_slope_dir').value = data.slopeDir || 'S';
 
@@ -686,6 +739,7 @@
             if (prop === 'bottom') { data.bottomBase = parseInt(val)||1; dimChanged = true; }
             if (prop === 'height') { data.rows = parseInt(val)||1; dimChanged = true; }
             if (prop === 'slope') { data.slopeType = val; dimChanged = true; }
+            if (prop === 'rot') { data.rot = parseInt(val) || 0; }
             if (prop === 'railDir') { data.railDir = val; }
             if (prop === 'slopeDir') { data.slopeDir = val; }
 
@@ -708,9 +762,9 @@
                 container.appendChild(row);
             });
         }
-        function addStringType() { state.stringTypes.push({ count: 1, size: 10 }); renderStringList(); draw(); saveToLocal(); }
-        function removeString(index) { state.stringTypes.splice(index, 1); renderStringList(); draw(); saveToLocal(); }
-        function updateString(index, f, v) { state.stringTypes[index][f] = parseInt(v) || 0; draw(); saveToLocal(); }
+        function addStringType() { state.stringTypes.push({ count: 1, size: 10 }); state.stringPermutation = null; renderStringList(); draw(); saveToLocal(); }
+        function removeString(index) { state.stringTypes.splice(index, 1); state.stringPermutation = null; renderStringList(); draw(); saveToLocal(); }
+        function updateString(index, f, v) { state.stringTypes[index][f] = parseInt(v) || 0; state.stringPermutation = null; draw(); saveToLocal(); }
         function updateInverterConfig(key, val) {
             const v = parseInt(val) || 0;
             if (key === 'count') state.inverters = Math.max(1, v);
@@ -724,9 +778,16 @@
         function updateAlgo(key, val) {
             if (key === 'crossGroup') state.allowCrossGroup = val;
             if (key === 'strictOrient') state.strictOrient = val;
+            if (key === 'fillOrder') state.fillOrder = val;
+            if (key === 'fillAlgorithm') {
+                state.fillAlgorithm = val;
+                // Update UI State
+                const disabled = (val === 'proximity');
+                document.getElementById('sel_fill_order').disabled = disabled;
+                document.getElementById('sel_fill_order').style.opacity = disabled ? '0.5' : '1';
+            }
             draw(); saveToLocal();
         }
-
         // --- CORE LOGIC ---
         function generateData() {
             // state.inverters is now the source of truth, updated by updateInverters()
@@ -740,6 +801,16 @@
                     strings.push({ id: globalStrId++, size: type.size, type: `${type.size}p`, color: `hsla(${hue}, 70%, 50%, 1)`, lightColor: `hsla(${hue}, 70%, 90%, 1)` });
                 }
             });
+
+            // Optimization: Apply Shuffle
+            if (state.stringPermutation && state.stringPermutation.length === strings.length) {
+                const reordered = [];
+                state.stringPermutation.forEach(idx => reordered.push(strings[idx]));
+                strings = reordered;
+            } else {
+                state.stringPermutation = null;
+            }
+
             let panelStream = [];
             strings.forEach(str => {
                 for(let p=1; p<=str.size; p++) panelStream.push({ stringId: str.id, stringType: str.type, panelNum: p, totalInString: str.size, color: str.color, lightColor: str.lightColor });
@@ -750,21 +821,18 @@
             let streamIdx = 0;
             let totalCapacity = 0;
             
-            // Convert map to array and sort by group
             let rawTables = Array.from(state.tables.values());
             rawTables.sort((a,b) => {
                  if(a.group !== b.group) return a.group.localeCompare(b.group);
                  return a.name.localeCompare(b.name);
             });
 
-            // Group tables
             let groups = {};
             rawTables.forEach(t => {
                 if(!groups[t.group]) groups[t.group] = [];
                 groups[t.group].push(t);
             });
 
-            // Layout Cursor
             let layoutY = DRAW_OPTS.tableMargin;
             let layoutMaxW = 0;
             let layoutMaxH = 0;
@@ -772,8 +840,6 @@
             for (let grpName in groups) {
             let grpArray = groups[grpName];
 
-            // Prioritize continuity of slopeDir
-            // Prioritize continuity of slopeDir
             let unprocessed = [...grpArray];
             let orderedGroup = [];
             if (unprocessed.length > 0) {
@@ -791,7 +857,6 @@
                 }
             }
 
-            // Calculate total capacity for stats
             let groupTotalCap = 0;
             orderedGroup.forEach(t => {
                 let cap = 0;
@@ -801,70 +866,160 @@
                 groupTotalCap += cap;
             });
 
-            // Batch Buffer
             let groupPanels = [];
-            let layoutX = DRAW_OPTS.tableMargin;
+            let layoutX = DRAW_OPTS.tableMargin + 170;
             let rowMaxH = 0;
-            let lastSlope = null;
 
-            // Debug Info for this Group
-            const grpDebug = { group: grpName, arrays: [] };
-
-            // Process Arrays one by one with a Refillable Buffer
-            orderedGroup.forEach(tConfig => {
-                const needed = tConfig._tempCap;
-                const curSlope = tConfig.slopeDir || 'S';
-
-                // 1. Refill Buffer from Stream if needed
-                while(groupPanels.length < needed && streamIdx < panelStream.length) {
-                    groupPanels.push(panelStream[streamIdx]);
-                    streamIdx++;
-                }
-
-                // 2. Strict Orientation Logic
-                let skipped = 0;
-                if (state.strictOrient && lastSlope !== null && curSlope !== lastSlope) {
-                    // If buffer has panels and the first one is NOT a start of a string, dump panels until we find a start
-                    while(groupPanels.length > 0 && groupPanels[0].panelNum !== 1) {
-                        groupPanels.shift(); 
-                        skipped++; // We don't rewind streamIdx, these are "wasted" or skipped in the stream order
-                    }
-                    // If we dumped panels, we might need to Refill again to fill the array
-                    while(groupPanels.length < needed && streamIdx < panelStream.length) {
-                        groupPanels.push(panelStream[streamIdx]);
-                        streamIdx++;
+            // --- 1. Layout Pass (Calculate Positions First) ---
+            let groupLayouts = [];
+            
+            const getSlots = (t, rows, cols, vDir, hDir) => {
+                let valid = [];
+                for(let r=0; r<rows; r++) {
+                    for(let c=0; c<cols; c++) {
+                        if(t.mask[r][c] === 1) valid.push({r,c});
                     }
                 }
-                lastSlope = curSlope;
+                
+                valid.sort((a, b) => {
+                    if (t.railDir === 'col') {
+                        if (a.c !== b.c) return (a.c - b.c) * hDir;
+                        const isBaseCol = (hDir === 1) ? (a.c % 2 === 0) : (a.c % 2 !== 0);
+                        const dir = isBaseCol ? vDir : -vDir;
+                        return (a.r - b.r) * dir;
+                    } else {
+                        if (a.r !== b.r) return (a.r - b.r) * vDir;
+                        const isBaseRow = (vDir === 1) ? (a.r % 2 === 0) : (a.r % 2 !== 0);
+                        const dir = isBaseRow ? hDir : -hDir;
+                        return (a.c - b.c) * dir;
+                    }
+                });
+                return valid;
+            };
 
-                // 3. Extract panels for this array
-                const myPanels = groupPanels.splice(0, needed);
-
-                // 4. Fill
-                const grid = fillStructure(tConfig.mask, myPanels, tConfig.railDir || 'row', tConfig.slopeDir || 'S');
-                const bounds = { rows: tConfig.mask.length, cols: tConfig.mask[0].length };
-
-                grpDebug.arrays.push({ name: tConfig.name, cap: needed, filled: myPanels.length, slope: curSlope, skippedStr: skipped });
-
-                // Dimensions
-                const isVert = tConfig.railDir === 'col';
+            const getPos = (layout, bounds, r, c, railDir) => {
+                const pOffsetX = 5; const pOffsetY = 20;
+                const isVert = railDir === 'col';
                 const pW = isVert ? DRAW_OPTS.panelHeight : DRAW_OPTS.panelWidth;
                 const pH = isVert ? DRAW_OPTS.panelWidth : DRAW_OPTS.panelHeight;
+                const lx = pOffsetX + c * (pW + DRAW_OPTS.gapX) + pW/2;
+                const ly = pOffsetY + r * (pH + DRAW_OPTS.gapY) + pH/2;
+                const rotRad = (layout.rot || 0) * Math.PI / 180;
+                const cx = layout.w / 2; const cy = layout.h / 2;
+                const dx = lx - cx; const dy = ly - cy;
+                const wx = dx * Math.cos(rotRad) - dy * Math.sin(rotRad);
+                const wy = dx * Math.sin(rotRad) + dy * Math.cos(rotRad);
+                return { x: layout.x + cx + wx, y: layout.y + cy + wy };
+            };
 
-                const pixelW = (bounds.cols * (pW + DRAW_OPTS.gapX)) + 10; 
-                const pixelH = (bounds.rows * (pH + DRAW_OPTS.gapY)) + 25; 
+            orderedGroup.forEach(tConfig => {
+                const rows = tConfig.mask.length;
+                const cols = tConfig.mask[0].length;
+                const pW = tConfig.railDir === 'col' ? DRAW_OPTS.panelHeight : DRAW_OPTS.panelWidth;
+                const pH = tConfig.railDir === 'col' ? DRAW_OPTS.panelWidth : DRAW_OPTS.panelHeight;
+                const pixelW = (cols * (pW + DRAW_OPTS.gapX)) + 10; 
+                const pixelH = (rows * (pH + DRAW_OPTS.gapY)) + 25; 
 
-                tablesData.push({ 
-                    ...tConfig, 
-                    grid: grid, 
-                    bounds: bounds,
-                    layout: { x: layoutX, y: layoutY, w: pixelW, h: pixelH },
-                    _assignedPanels: myPanels // Ref for backtracking
+                let finalX = tConfig.x !== undefined ? tConfig.x : layoutX;
+                let finalY = tConfig.y !== undefined ? tConfig.y : layoutY;
+
+                let defV = (state.fillOrder === 'bottom') ? -1 : 1;
+                let defH = (tConfig.slopeDir || 'S').includes('W') ? -1 : 1;
+
+                const layout = { x: finalX, y: finalY, w: pixelW, h: pixelH, rot: tConfig.rot || 0 };
+                const defSlots = getSlots(tConfig, rows, cols, defV, defH);
+                const pStart = defSlots.length > 0 ? getPos(layout, {rows, cols}, defSlots[0].r, defSlots[0].c, tConfig.railDir) : {x:finalX, y:finalY};
+                
+                groupLayouts.push({
+                    config: tConfig,
+                    layout: layout,
+                    bounds: { rows, cols },
+                    defaultSlots: defSlots, 
+                    capacity: tConfig._tempCap,
+                    entryPos: pStart 
                 });
 
                 layoutX += pixelW + DRAW_OPTS.tableMargin;
                 rowMaxH = Math.max(rowMaxH, pixelH);
             });
+
+            // --- 2. Fill Pass ---
+            let lastPanelWorldPos = null;
+            let lastSlope = null;
+
+            const fillGridFromSlots = (mask, slots, panels) => {
+                if (!slots || !Array.isArray(slots)) return mask.map(r => r.map(() => null));
+                const rows = mask.length;
+                const cols = mask[0].length;
+                const finalGrid = Array(rows).fill(null).map(() => Array(cols).fill(null));
+                slots.forEach((slot, index) => {
+                    if (index < panels.length) {
+                        finalGrid[slot.r][slot.c] = panels[index];
+                    }
+                });
+                return finalGrid;
+            };
+
+            while(groupLayouts.length > 0) {
+                let bestIdx = 0;
+                let chosenSlots = null;
+                
+                if (state.fillAlgorithm === 'proximity') {
+                    if (lastPanelWorldPos) {
+                        let minD = Infinity;
+                        const combos = [{ v: 1, h: 1 }, { v: 1, h: -1 }, { v: -1, h: 1 }, { v: -1, h: -1 }];
+                        groupLayouts.forEach((g, i) => {
+                            combos.forEach(combo => {
+                                const slots = getSlots(g.config, g.bounds.rows, g.bounds.cols, combo.v, combo.h);
+                                if (slots && slots.length > 0) {
+                                    const startP = getPos(g.layout, g.bounds, slots[0].r, slots[0].c, g.config.railDir);
+                                    const d = Math.hypot(startP.x - lastPanelWorldPos.x, startP.y - lastPanelWorldPos.y);
+                                    if (d < minD) { minD = d; bestIdx = i; chosenSlots = slots; }
+                                }
+                            });
+                        });
+                    } else {
+                        let minMetric = Infinity;
+                        groupLayouts.forEach((g, i) => {
+                            const metric = g.layout.y * 10000 + g.layout.x;
+                            if (metric < minMetric) { minMetric = metric; bestIdx = i; }
+                        });
+                    }
+                } 
+
+                const target = groupLayouts.splice(bestIdx, 1)[0];
+                const finalSlots = chosenSlots || target.defaultSlots || []; 
+                const tConfig = target.config;
+                const needed = target.capacity;
+                const curSlope = tConfig.slopeDir || 'S';
+
+                while(groupPanels.length < needed && streamIdx < panelStream.length) {
+                    groupPanels.push(panelStream[streamIdx++]);
+                }
+
+                if (state.strictOrient && lastSlope !== null && curSlope !== lastSlope) {
+                    while(groupPanels.length > 0 && groupPanels[0].panelNum !== 1) {
+                        groupPanels.shift(); 
+                    }
+                    while(groupPanels.length < needed && streamIdx < panelStream.length) {
+                        groupPanels.push(panelStream[streamIdx++]);
+                    }
+                }
+                lastSlope = curSlope;
+
+                const myPanels = groupPanels.splice(0, needed);
+                const grid = fillGridFromSlots(tConfig.mask, finalSlots, myPanels);
+                
+                if (myPanels.length > 0) {
+                    const lastSlotIdx = myPanels.length - 1;
+                    if (lastSlotIdx < finalSlots.length) {
+                        const ls = finalSlots[lastSlotIdx];
+                        lastPanelWorldPos = getPos(target.layout, target.bounds, ls.r, ls.c, tConfig.railDir);
+                    }
+                }
+
+                tablesData.push({ ...tConfig, grid: grid, bounds: target.bounds, layout: target.layout, _assignedPanels: myPanels });
+            }
 
             // Post-Group Logic: "Cross Group" Check
             // If not allowed, we check the very last panel of the last array.
@@ -899,15 +1054,14 @@
 
                             // Rewind Global Stream
                             streamIdx -= removedCount;
-                            console.log(`[Group ${grpName}] Backtracked ${removedCount} panels to enforce Group Crossing Rule.`);
+                            
                         }
                         break; // Only check the very last string of the group
                     }
                 }
             }
 
-            console.log('Algorithm Stats:', JSON.stringify(grpDebug, null, 2));
-
+            
             layoutMaxW = Math.max(layoutMaxW, layoutX);
             layoutY += rowMaxH + DRAW_OPTS.tableMargin + 20; 
         }
@@ -919,7 +1073,6 @@
 
         const diff = totalCapacity - panelStream.length;
         document.getElementById('stats_bar').innerHTML = `Panels: <b>${panelStream.length}</b> | Placed: <b>${placedCount}</b> | Capacity: <b>${totalCapacity}</b>`;
-
         // --- INVERTER MAPPING LOGIC ---
         // 1. Identify Direction of each String
         const stringDirMap = new Map();
@@ -1026,8 +1179,8 @@
 
         if(validSlots.length === 0) return Array(rows).fill(null).map(()=>Array(cols).fill(null));
 
-        let vDir = 1, hDir = 1;
-        if (slopeDir.includes('N')) vDir = -1;
+        let vDir = (state.fillOrder === 'bottom') ? -1 : 1;
+        let hDir = 1;
         if (slopeDir.includes('W')) hDir = -1;
 
         validSlots.sort((a, b) => {
@@ -1054,13 +1207,10 @@
         // --- DRAWING ---
         const canvas = document.getElementById('solarCanvas');
         const ctx = canvas.getContext('2d');
-        let interactiveZones = []; // Tooltips
-        let clickZones = []; // Click events (world coords)
-
+        // Removed clickZones, using Math-based hit test in handlers
+        
         function draw() {
             const data = generateData();
-            interactiveZones = [];
-            clickZones = [];
 
             // Clear Screen
             ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -1071,79 +1221,82 @@
             ctx.scale(view.scale, view.scale);
 
             // Draw Arrays
-            let lastGroup = null;
-            
             data.tables.forEach(table => {
-                const originX = table.layout.x;
-                const originY = table.layout.y;
+                // Dimensions & Transform
+                const frameW = table.layout.w;
+                const frameH = table.layout.h;
+                const rot = (table.layout.rot || 0) * Math.PI / 180;
+                
+                // Calculate Center
+                const cx = table.layout.x + frameW / 2;
+                const cy = table.layout.y + frameH / 2;
+
+                ctx.save();
+                ctx.translate(cx, cy);
+                ctx.rotate(rot);
+                ctx.translate(-frameW / 2, -frameH / 2); // Draw relative to top-left 0,0
+
                 const isSelected = state.selectedId === table.id;
 
                 // Group Label
-                if (table.group !== lastGroup) {
-                    ctx.fillStyle = '#888';
-                    ctx.font = 'bold 12px sans-serif';
-                    ctx.textAlign = 'left';
-                    ctx.fillText(table.group.toUpperCase(), originX, originY - 22);
-                    lastGroup = table.group;
-                }
+                ctx.fillStyle = '#888'; ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'left';
+                ctx.fillText(table.group.toUpperCase(), 0, -22);
 
                 // Name
-                ctx.fillStyle = isSelected ? '#3b82f6' : '#333';
-                ctx.font = 'bold 16px sans-serif';
+                ctx.fillStyle = isSelected ? '#3b82f6' : '#333'; ctx.font = 'bold 16px sans-serif';
                 ctx.textAlign = 'left';
                 const dirLabel = table.slopeDir ? `(${table.slopeDir})` : '(S)';
-                ctx.fillText(`${table.name} ${dirLabel}`, originX, originY - 5);
+                ctx.fillText(`${table.name} ${dirLabel}`, 0, -5);
 
-                // Click Zone (Array Selection)
-                const frameW = table.layout.w;
-                const frameH = table.layout.h;
-                // Add array selection zone only if not clicking a specific cell (handled by layer order, or simple check)
-                clickZones.push({ type: 'array', id: table.id, x: originX, y: originY, w: frameW, h: frameH });
-
-                // Frame
+                // Frame & Anchor
                 if(isSelected) {
                     ctx.strokeStyle = '#f59e0b'; ctx.lineWidth = 2;
-                    ctx.strokeRect(originX - 2, originY - 2, frameW + 4, frameH + 4);
+                    ctx.strokeRect(-2, -2, frameW + 4, frameH + 4);
+
+                    // Anchor Point (Blue Dot)
+                    ctx.fillStyle = '#2563eb'; 
+                    ctx.beginPath();
+                    ctx.arc(0, 0, 8, 0, Math.PI*2);
+                    ctx.fill();
+                    ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
+                    ctx.stroke();
                 }
 
                 // Panels
-            const pOffsetX = 5;
-            const pOffsetY = 20; // Space for title
+                const pOffsetX = 5;
+                const pOffsetY = 20; 
 
-            const isVert = table.railDir === 'col';
-            const pW = isVert ? DRAW_OPTS.panelHeight : DRAW_OPTS.panelWidth;
-            const pH = isVert ? DRAW_OPTS.panelWidth : DRAW_OPTS.panelHeight;
+                const isVert = table.railDir === 'col';
+                const pW = isVert ? DRAW_OPTS.panelHeight : DRAW_OPTS.panelWidth;
+                const pH = isVert ? DRAW_OPTS.panelWidth : DRAW_OPTS.panelHeight;
 
-            let connectionPoints = {};
-            table.grid.forEach((row, rIndex) => {
-                row.forEach((panel, cIndex) => {
-                    const x = originX + pOffsetX + (cIndex * (pW + DRAW_OPTS.gapX));
-                    const y = originY + pOffsetY + (rIndex * (pH + DRAW_OPTS.gapY));
-                    const isMaskActive = table.mask[rIndex] && table.mask[rIndex][cIndex] === 1;
+                let connectionPoints = {};
+                table.grid.forEach((row, rIndex) => {
+                    row.forEach((panel, cIndex) => {
+                        const x = pOffsetX + (cIndex * (pW + DRAW_OPTS.gapX));
+                        const y = pOffsetY + (rIndex * (pH + DRAW_OPTS.gapY));
+                        const isMaskActive = table.mask[rIndex] && table.mask[rIndex][cIndex] === 1;
 
-                    if (panel) {
-                        ctx.fillStyle = panel.lightColor; ctx.fillRect(x, y, pW, pH);
-                        ctx.strokeStyle = panel.color; ctx.lineWidth = 2; ctx.strokeRect(x, y, pW, pH);
-                        ctx.fillStyle = '#000'; ctx.textAlign = 'center'; ctx.font = '9px sans-serif';
-                        ctx.fillText(`S${panel.stringId}`, x + pW/2, y + pH/2 - 4);
-                        ctx.font = 'bold 9px sans-serif'; ctx.fillText(panel.panelNum, x + pW/2, y + pH/2 + 7);
-                        interactiveZones.push({ x, y, w: pW, h: pH, info: panel });
-                        if(!connectionPoints[panel.stringId]) connectionPoints[panel.stringId] = [];
-                        connectionPoints[panel.stringId].push({ x: x + pW/2, y: y + pH/2, num: panel.panelNum, color: panel.color });
-                    } else if (!isMaskActive) {
-                        ctx.fillStyle = '#f3f4f6'; ctx.fillRect(x, y, pW, pH);
-                        ctx.strokeStyle = '#e5e7eb'; ctx.lineWidth = 1;
-                        ctx.setLineDash([2, 2]); ctx.strokeRect(x, y, pW, pH); ctx.setLineDash([]);
-                    } else {
-                        ctx.fillStyle = '#fff'; ctx.fillRect(x, y, pW, pH);
-                        ctx.strokeStyle = '#ccc'; ctx.lineWidth = 1; ctx.strokeRect(x, y, pW, pH);
-                    }
-
-                    if (isSelected) {
-                        clickZones.push({ type: 'cell', id: table.id, row: rIndex, col: cIndex, x: x, y: y, w: pW, h: pH });
-                    }
+                        if (panel) {
+                            ctx.fillStyle = panel.lightColor; ctx.fillRect(x, y, pW, pH);
+                            ctx.strokeStyle = panel.color; ctx.lineWidth = 2; ctx.strokeRect(x, y, pW, pH);
+                            ctx.fillStyle = '#000'; ctx.textAlign = 'center'; ctx.font = '9px sans-serif';
+                            ctx.fillText(`S${panel.stringId}`, x + pW/2, y + pH/2 - 4);
+                            ctx.font = 'bold 9px sans-serif'; ctx.fillText(panel.panelNum, x + pW/2, y + pH/2 + 7);
+                            
+                            // Local coords for wires
+                            if(!connectionPoints[panel.stringId]) connectionPoints[panel.stringId] = [];
+                            connectionPoints[panel.stringId].push({ x: x + pW/2, y: y + pH/2, num: panel.panelNum, color: panel.color });
+                        } else if (!isMaskActive) {
+                            ctx.fillStyle = '#f3f4f6'; ctx.fillRect(x, y, pW, pH);
+                            ctx.strokeStyle = '#e5e7eb'; ctx.lineWidth = 1;
+                            ctx.setLineDash([2, 2]); ctx.strokeRect(x, y, pW, pH); ctx.setLineDash([]);
+                        } else {
+                            ctx.fillStyle = '#fff'; ctx.fillRect(x, y, pW, pH);
+                            ctx.strokeStyle = '#ccc'; ctx.lineWidth = 1; ctx.strokeRect(x, y, pW, pH);
+                        }
+                    });
                 });
-            });
 
                 // Wires
                 for (let sId in connectionPoints) {
@@ -1161,125 +1314,276 @@
                         ctx.beginPath(); ctx.fillStyle = '#fff'; ctx.arc(p.x, p.y, 3, 0, Math.PI*2); ctx.fill(); ctx.strokeStyle = '#333'; ctx.lineWidth = 1; ctx.stroke();
                     });
                 }
+                
+                ctx.restore();
             });
 
-            // Draw Inverters
-            const invY = data.worldH + 20;
+            // Draw Inverters (Left Side Column)
+            const invColX = 15;
+            let invColY = 40;
+            const invCardW = 150;
+            const invRowH = 14;
+
             ctx.fillStyle = '#333'; ctx.font = 'bold 16px sans-serif'; ctx.textAlign = 'left';
-            ctx.fillText("Inverters", DRAW_OPTS.tableMargin, invY - 10);
-            
-            const invW = Math.max(100, (data.worldW - DRAW_OPTS.tableMargin) / state.inverters - 10);
-            
-            // Dynamic height based on content
-        const baseInvH = 60;
-        const rowH = 14;
+            ctx.fillText("Inverters", invColX, invColY - 10);
 
-        data.inverters.forEach((inv, i) => {
-            // Calculate height needed
-            let lineCount = 0;
-            inv.mppts.forEach(m => {
-                if (m.strings.length > 0) lineCount += (1 + m.strings.length); // Header + strings
-            });
-            const h = Math.max(100, baseInvH + (lineCount * rowH));
+            data.inverters.forEach((inv) => {
+                let lineCount = 0;
+                inv.mppts.forEach(m => { if (m.strings.length > 0) lineCount += (1 + m.strings.length); });
+                
+                // Autofit height: Base(45) + Lines
+                const h = Math.max(50, 45 + (lineCount * invRowH));
 
-            const x = DRAW_OPTS.tableMargin + i*(invW + 10);
-            ctx.fillStyle = '#fff'; ctx.strokeStyle = '#666'; ctx.lineWidth = 1;
-            ctx.fillRect(x, invY, invW, h); ctx.strokeRect(x, invY, invW, h);
+                // Draw Card
+                ctx.fillStyle = '#fff'; ctx.strokeStyle = '#666'; ctx.lineWidth = 1;
+                ctx.fillRect(invColX, invColY, invCardW, h); 
+                ctx.strokeRect(invColX, invColY, invCardW, h);
 
-            ctx.fillStyle = '#333'; ctx.textAlign = 'center'; ctx.font = 'bold 11px sans-serif';
-            ctx.fillText(`Inv ${inv.id}`, x + invW/2, invY + 15);
-            ctx.font = '10px sans-serif'; ctx.fillText(`${inv.totalPanels} Pnls`, x + invW/2, invY + 28);
+                // Header
+                ctx.fillStyle = '#333'; ctx.textAlign = 'center'; ctx.font = 'bold 11px sans-serif';
+                ctx.fillText(`Inv ${inv.id}`, invColX + invCardW/2, invColY + 15);
+                ctx.font = '10px sans-serif'; 
+                const pwr = inv.curWatts ? ` - ${(inv.curWatts/1000).toFixed(1)}kW` : '';
+                ctx.fillText(`${inv.totalPanels} Pnls${pwr}`, invColX + invCardW/2, invColY + 28);
 
-            let curY = invY + 45;
-            ctx.textAlign = 'left';
+                // Content
+                let curY = invColY + 45;
+                ctx.textAlign = 'left';
 
-            inv.mppts.forEach(m => {
-                if (m.strings.length === 0) return;
-                // MPPT Header
-                ctx.fillStyle = '#eee'; ctx.fillRect(x+2, curY - 10, invW-4, rowH);
-                ctx.fillStyle = '#555'; ctx.font = 'bold 9px sans-serif';
-                ctx.fillText(`MPPT ${m.id} (${m.dir || '-'})`, x+5, curY);
-                curY += rowH;
+                inv.mppts.forEach(m => {
+                    if (m.strings.length === 0) return;
+                    // MPPT Bar
+                    ctx.fillStyle = '#f3f4f6'; ctx.fillRect(invColX+2, curY - 10, invCardW-4, invRowH);
+                    ctx.fillStyle = '#555'; ctx.font = 'bold 9px sans-serif';
+                    ctx.fillText(`MPPT ${m.id} (${m.dir || '-'})`, invColX+5, curY);
+                    curY += invRowH;
 
-                // Strings
-                m.strings.forEach(s => {
-                    ctx.fillStyle = s.color; ctx.fillRect(x+10, curY-7, 8, 8);
-                    ctx.fillStyle = '#000'; ctx.font = '9px sans-serif';
-                    ctx.fillText(`S${s.id} (${s.type})`, x+22, curY);
-                    curY += rowH;
+                    // Strings
+                    m.strings.forEach(s => {
+                        ctx.fillStyle = s.color; ctx.fillRect(invColX+10, curY-7, 8, 8);
+                        ctx.fillStyle = '#000'; ctx.font = '9px sans-serif';
+                        ctx.fillText(`S${s.id} (${s.type})`, invColX+22, curY);
+                        curY += invRowH;
+                    });
                 });
+
+                invColY += h + 15; // Gap
             });
-        });
 
             ctx.restore();
         }
 
         // --- INTERACTION HANDLERS ---
-        canvas.addEventListener('click', (e) => {
-            if (view.isDragging) return; // Ignore click if dragging
+        let activeTool = 'move';
+        function setTool(t) {
+            activeTool = t;
+            document.querySelectorAll('.btn-tool').forEach(b => { 
+                if(b.id !== 'btn_snap') b.classList.remove('active'); 
+            });
+            document.getElementById('btn_tool_' + t).classList.add('active');
+            canvas.style.cursor = t === 'pan' ? 'grab' : 'default';
+            if(t === 'pan') selectArray(null); 
+        }
 
-            const rect = canvas.getBoundingClientRect();
-            // Convert to World Coords
-            const mouseX = (e.clientX - rect.left - view.x) / view.scale;
-            const mouseY = (e.clientY - rect.top - view.y) / view.scale;
+        function toggleSnap() {
+            state.snapToGrid = !state.snapToGrid;
+            const btn = document.getElementById('btn_snap');
+            if(state.snapToGrid) btn.classList.add('active');
+            else btn.classList.remove('active');
+        }
 
-            // 1. Cell Click (Higher priority)
-            for(let i = clickZones.length - 1; i >= 0; i--) {
-                const zone = clickZones[i];
-                if (zone.type === 'cell') {
-                    if(mouseX >= zone.x && mouseX <= zone.x+zone.w && mouseY >= zone.y && mouseY <= zone.y+zone.h) {
-                        toggleMaskCell(zone.id, zone.row, zone.col);
-                        return;
-                    }
+        function getLocalCoords(wx, wy, t) {
+            const rotRad = (t.layout.rot || 0) * Math.PI / 180;
+            const cx = t.layout.x + t.layout.w / 2;
+            const cy = t.layout.y + t.layout.h / 2;
+            const dx = wx - cx;
+            const dy = wy - cy;
+            const lx = dx * Math.cos(-rotRad) - dy * Math.sin(-rotRad);
+            const ly = dx * Math.sin(-rotRad) + dy * Math.cos(-rotRad);
+            return { x: lx + t.layout.w / 2, y: ly + t.layout.h / 2 };
+        }
+
+        let dragTarget = null;
+        let dragOffset = { x: 0, y: 0 };
+        let isAnchorDrag = false;
+        
+        container.addEventListener('mousedown', (e) => {
+            e.preventDefault(); 
+            const rect = container.getBoundingClientRect();
+            const mx = (e.clientX - rect.left - view.x) / view.scale;
+            const my = (e.clientY - rect.top - view.y) / view.scale;
+            
+            // 1. Pan Tool Override
+            if (activeTool === 'pan') {
+                view.isDragging = true;
+                view.lastX = e.clientX;
+                view.lastY = e.clientY;
+                canvas.style.cursor = 'grabbing';
+                return;
+            }
+
+            const data = generateData();
+            let hitArray = null;
+            let hitAnchor = false;
+
+            for(let i = data.tables.length - 1; i >= 0; i--) {
+                const t = data.tables[i];
+                const local = getLocalCoords(mx, my, t);
+                const dist = Math.sqrt(local.x * local.x + local.y * local.y);
+
+                // Check Anchor (Radius 25)
+                if (dist <= 25) {
+                    hitArray = t;
+                    hitAnchor = true;
+                    break;
+                }
+
+                // Check Body
+                if (local.x >= 0 && local.x <= t.layout.w && local.y >= 0 && local.y <= t.layout.h) {
+                    hitArray = t;
+                    hitAnchor = false;
+                    break;
                 }
             }
-            // 2. Array Click (Background of array)
-            for(let i = clickZones.length - 1; i >= 0; i--) {
-                const zone = clickZones[i];
-                if (zone.type === 'array') {
-                    if(mouseX >= zone.x && mouseX <= zone.x+zone.w && mouseY >= zone.y && mouseY <= zone.y+zone.h) {
-                        selectArray(zone.id);
-                        return;
+
+            if (hitArray) {
+                view.isDragging = false; 
+                
+                // Check previous state
+                const wasSelected = (state.selectedId === hitArray.id);
+
+                if (!wasSelected) {
+                    selectArray(hitArray.id);
+                }
+
+                if (hitAnchor) {
+                    dragTarget = hitArray;
+                    dragOffset = { x: mx - hitArray.layout.x, y: my - hitArray.layout.y };
+                    isAnchorDrag = true;
+                } else {
+                    // Only toggle cell if the array was ALREADY selected
+                    // Only toggle cell if the array was ALREADY selected
+                    if (wasSelected) {
+                        const local = getLocalCoords(mx, my, hitArray);
+                        const pOffsetX = 5; const pOffsetY = 20;
+                        const isVert = hitArray.railDir === 'col';
+                        const pW = isVert ? DRAW_OPTS.panelHeight : DRAW_OPTS.panelWidth;
+                        const pH = isVert ? DRAW_OPTS.panelWidth : DRAW_OPTS.panelHeight;
+                        
+                        const cIndex = Math.floor((local.x - pOffsetX) / (pW + DRAW_OPTS.gapX));
+                        const rIndex = Math.floor((local.y - pOffsetY) / (pH + DRAW_OPTS.gapY));
+
+                        if (rIndex >= 0 && rIndex < hitArray.bounds.rows && cIndex >= 0 && cIndex < hitArray.bounds.cols) {
+                            toggleMaskCell(hitArray.id, rIndex, cIndex);
+                        }
                     }
                 }
+                return; 
+            }
+
+            if (state.selectedId) selectArray(null); 
+            view.isDragging = true;
+            view.lastX = e.clientX;
+            view.lastY = e.clientY;
+            canvas.style.cursor = 'grabbing';
+        });
+
+        window.addEventListener('mousemove', (e) => {
+            const rect = container.getBoundingClientRect();
+            const mx = (e.clientX - rect.left - view.x) / view.scale;
+            const my = (e.clientY - rect.top - view.y) / view.scale;
+
+            // Priority 1: Anchor Dragging
+            if (isAnchorDrag && dragTarget) {
+                const t = state.tables.get(dragTarget.id);
+                if (t) {
+                    let nx = mx - dragOffset.x;
+                    let ny = my - dragOffset.y;
+
+                    // Snap Logic
+                    if (state.snapToGrid) {
+                        const gridSize = 20;
+                        nx = Math.round(nx / gridSize) * gridSize;
+                        ny = Math.round(ny / gridSize) * gridSize;
+                    }
+
+                    t.x = nx;
+                    t.y = ny;
+                    state.tables.set(t.id, t);
+                    draw();
+                }
+                return;
+            }
+
+            // Priority 2: Panning
+            if (view.isDragging) {
+                const dx = e.clientX - view.lastX;
+                const dy = e.clientY - view.lastY;
+                view.x += dx;
+                view.y += dy;
+                view.lastX = e.clientX;
+                view.lastY = e.clientY;
+                draw();
+                return;
+            }
+
+            // Priority 3: Cursor Hover Effects
+            if (activeTool === 'move') {
+                const data = generateData();
+                let cursor = 'default';
+                let tooltipShown = false;
+
+                for(let t of data.tables) {
+                    const local = getLocalCoords(mx, my, t);
+                    const dist = Math.sqrt(local.x * local.x + local.y * local.y);
+                    
+                    // Anchor Hover
+                    if (state.selectedId === t.id && dist <= 25) {
+                        cursor = 'move';
+                        break;
+                    }
+
+                    // Body Hover
+                    if (local.x >= 0 && local.x <= t.layout.w && local.y >= 0 && local.y <= t.layout.h) {
+                        if (state.selectedId === t.id) {
+                            cursor = 'crosshair'; 
+                            
+                            const pOffsetX = 5; const pOffsetY = 20;
+                            const isVert = t.railDir === 'col';
+                            const pW = isVert ? DRAW_OPTS.panelHeight : DRAW_OPTS.panelWidth;
+                            const pH = isVert ? DRAW_OPTS.panelWidth : DRAW_OPTS.panelHeight;
+                            const c = Math.floor((local.x - pOffsetX) / (pW + DRAW_OPTS.gapX));
+                            const r = Math.floor((local.y - pOffsetY) / (pH + DRAW_OPTS.gapY));
+                            
+                            if (t.grid[r] && t.grid[r][c]) {
+                                const panel = t.grid[r][c];
+                                const tooltip = document.getElementById('tooltip');
+                                tooltip.style.display = 'block';
+                                tooltip.style.left = (e.clientX + 10) + 'px';
+                                tooltip.style.top = (e.clientY + 10) + 'px';
+                                tooltip.innerHTML = `S${panel.stringId} (${panel.stringType}) | P${panel.panelNum}`;
+                                tooltipShown = true;
+                            }
+                        } else {
+                            cursor = 'pointer'; 
+                        }
+                        break; 
+                    }
+                }
+                canvas.style.cursor = cursor;
+                if (!tooltipShown) document.getElementById('tooltip').style.display = 'none';
+            } else {
+                canvas.style.cursor = 'grab';
             }
         });
 
-        canvas.addEventListener('mousemove', (e) => {
-            const rect = canvas.getBoundingClientRect();
-            const mouseX = (e.clientX - rect.left - view.x) / view.scale;
-            const mouseY = (e.clientY - rect.top - view.y) / view.scale;
-
-            // Hover effects logic
-            let cursor = 'default';
-            if (view.isDragging) cursor = 'grabbing';
-            else {
-                for(let zone of clickZones) {
-                    if (zone.type === 'cell' && mouseX >= zone.x && mouseX <= zone.x+zone.w && mouseY >= zone.y && mouseY <= zone.y+zone.h) {
-                        cursor = 'crosshair'; break;
-                    }
-                    if (zone.type === 'array' && mouseX >= zone.x && mouseX <= zone.x+zone.w && mouseY >= zone.y && mouseY <= zone.y+zone.h) {
-                        if (cursor !== 'crosshair') cursor = 'pointer';
-                    }
-                }
+        window.addEventListener('mouseup', () => {
+            if (isAnchorDrag) {
+                saveToLocal();
             }
-            canvas.style.cursor = cursor;
-            
-            // Tooltip
-            let hit = false;
-            if (!view.isDragging) {
-                for(let zone of interactiveZones) {
-                    if(mouseX >= zone.x && mouseX <= zone.x+zone.w && mouseY >= zone.y && mouseY <= zone.y+zone.h) {
-                        const tooltip = document.getElementById('tooltip');
-                        tooltip.style.display = 'block';
-                        tooltip.style.left = (e.clientX + 10) + 'px';
-                        tooltip.style.top = (e.clientY + 10) + 'px';
-                        tooltip.innerHTML = `S${zone.info.stringId} (${zone.info.stringType}) | P${zone.info.panelNum}`;
-                        hit = true; break;
-                    }
-                }
-            }
-            if(!hit) document.getElementById('tooltip').style.display = 'none';
+            dragTarget = null;
+            isAnchorDrag = false;
+            view.isDragging = false;
         });
 
         // Save / Load logic (same as previous)
@@ -1670,6 +1974,126 @@
         win.document.write(htmlContent); win.document.close(); win.focus();
         setTimeout(() => { win.print(); win.close(); }, 500);
     }
+        function runOptimization() {
+            const resultDiv = document.getElementById('opt_result');
+            resultDiv.textContent = "Optimizing string order...";
+            resultDiv.style.color = "#d97706";
+            
+            setTimeout(() => {
+                let totalStrings = 0;
+                state.stringTypes.forEach(t => totalStrings += t.count);
+                if (totalStrings === 0) { resultDiv.textContent = "No strings to optimize."; return; }
+                
+                let bestPerm = null;
+                let minSumSq = Infinity;
+                let bestSplitCount = Infinity;
+                
+                const iterations = 500;
+                
+                for(let i=0; i<iterations; i++) {
+                    const perm = Array.from({length: totalStrings}, (_, k) => k);
+                    for (let k = perm.length - 1; k > 0; k--) {
+                        const j = Math.floor(Math.random() * (k + 1));
+                        [perm[k], perm[j]] = [perm[j], perm[k]];
+                    }
+                    
+                    state.stringPermutation = perm;
+                    const data = generateData();
+                    const stats = calculateMetric(data.tables);
+                    
+                    if (stats.sumSq < minSumSq) {
+                        minSumSq = stats.sumSq;
+                        bestSplitCount = stats.splits;
+                        bestPerm = [...perm];
+                    }
+                }
+                
+                state.stringPermutation = bestPerm;
+                generateData(); 
+                
+                resultDiv.innerHTML = `<b>Optimization Complete.</b><br>Splits: ${bestSplitCount} | SumSq Metric: ${Math.round(minSumSq)}`;
+                resultDiv.style.color = "#10b981";
+                draw();
+                saveToLocal();
+            }, 50);
+        }
+        
+        function calculateMetric(tables) {
+            let splits = 0;
+            let sumSq = 0;
+            
+            const panels = [];
+            tables.forEach(t => {
+                if(t._assignedPanels && t.grid) {
+                    t._assignedPanels.forEach(p => {
+                        let r = -1, c = -1;
+                        for(let rr=0; rr<t.grid.length; rr++) {
+                            for(let cc=0; cc<t.grid[0].length; cc++) {
+                                if(t.grid[rr][cc] === p) { r=rr; c=cc; break; }
+                            }
+                            if(r!==-1) break;
+                        }
+
+                        if(r !== -1) {
+                             const pOffsetX = 5; const pOffsetY = 20;
+                             const isVert = t.railDir === 'col';
+                             const pW = isVert ? DRAW_OPTS.panelHeight : DRAW_OPTS.panelWidth;
+                             const pH = isVert ? DRAW_OPTS.panelWidth : DRAW_OPTS.panelHeight;
+                             
+                             const lx = pOffsetX + c * (pW + DRAW_OPTS.gapX) + pW/2;
+                             const ly = pOffsetY + r * (pH + DRAW_OPTS.gapY) + pH/2;
+                             const rotRad = (t.layout.rot || 0) * Math.PI / 180;
+                             const cx = t.layout.w / 2; const cy = t.layout.h / 2;
+                             const dx = lx - cx; const dy = ly - cy;
+                             const wx = dx * Math.cos(rotRad) - dy * Math.sin(rotRad);
+                             const wy = dx * Math.sin(rotRad) + dy * Math.cos(rotRad);
+                             
+                             panels.push({
+                                 strId: p.stringId,
+                                 pNum: p.panelNum,
+                                 tId: t.id,
+                                 x: t.layout.x + cx + wx,
+                                 y: t.layout.y + cy + wy
+                             });
+                        }
+                    });
+                }
+            });
+
+            const strings = {};
+            panels.forEach(p => {
+                if(!strings[p.strId]) strings[p.strId] = [];
+                strings[p.strId].push(p);
+            });
+
+            for(let sId in strings) {
+                const arr = strings[sId];
+                arr.sort((a,b) => a.pNum - b.pNum);
+                
+                for(let i=0; i<arr.length-1; i++) {
+                    const p1 = arr[i];
+                    const p2 = arr[i+1];
+                    
+                    if (p1.tId !== p2.tId) {
+                        splits++;
+                        const setA = arr.filter(p => p.tId === p1.tId);
+                        const setB = arr.filter(p => p.tId === p2.tId);
+                        
+                        let minD2 = Infinity;
+                        for(let a of setA) {
+                            for(let b of setB) {
+                                const dx = a.x - b.x;
+                                const dy = a.y - b.y;
+                                const d2 = dx*dx + dy*dy;
+                                if(d2 < minD2) minD2 = d2;
+                            }
+                        }
+                        if (minD2 !== Infinity) sumSq += minD2;
+                    }
+                }
+            }
+            return { splits, sumSq };
+        }
     </script>
 </body>
 </html>
