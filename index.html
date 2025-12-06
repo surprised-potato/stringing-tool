@@ -92,6 +92,7 @@
         <div class="sidebar-btn" id="btn_electrical" onclick="togglePanel('electrical')" title="Strings & Inverters">⚡</div>
         <div class="sidebar-btn" id="btn_algo" onclick="togglePanel('algo')" title="Fill Algorithm">⚙</div>
         <div class="sidebar-btn" id="btn_materials" onclick="togglePanel('materials')" title="Materials">🛠</div>
+        <div class="sidebar-btn" id="btn_filters" onclick="togglePanel('filters')" title="Visibility Filters">👁</div>
     </div>
 
     <div class="panel-drawer" id="main_drawer">
@@ -127,8 +128,11 @@
                                 <option value="trap">Trapezoid</option>
                             </select>
                         </div>
-                        <div class="input-group" style="width:60px">
-                            <label>Rot (°)</label>
+                        <div class="input-group" style="width:80px">
+                             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+                                <label style="margin:0;">Rot(°)</label>
+                                <input type="checkbox" id="chk_manual_rot" title="Manual Rotation" style="width:auto; margin:0;" onchange="updateSelectedProp('manualRot', this.checked)">
+                            </div>
                             <input type="number" id="prop_rot" value="0" step="5" onchange="updateSelectedProp('rot', this.value)">
                         </div>
                     </div>
@@ -197,6 +201,19 @@
                 <h3>Inverter Config</h3>
             <div class="props-row">
                 <div class="input-group" style="flex:1">
+                    <label>Min String</label>
+                    <input type="number" id="inp_str_min" value="8" min="1" max="30">
+                </div>
+                <div class="input-group" style="flex:1">
+                    <label>Max String</label>
+                    <input type="number" id="inp_str_max" value="13" min="1" max="30">
+                </div>
+                <button class="btn btn-blue" style="margin-top:14px; flex:1;" onclick="autoConfigStrings()">Auto-String</button>
+            </div>
+            <div id="auto_str_msg" style="font-size:11px; color:#666; margin-bottom:10px; text-align:center;"></div>
+
+            <div class="props-row">
+                <div class="input-group" style="flex:1">
                     <label>Units</label>
                     <input type="number" id="inp_inverters" value="10" min="1" onchange="updateInverterConfig('count', this.value)">
                 </div>
@@ -257,12 +274,29 @@
 
             <hr style="border:0; border-top:1px solid #eee; margin:15px 0;">
             <button class="btn btn-blue" style="width:100%" onclick="runOptimization()">Optimize String Order</button>
-            <div id="opt_result" style="font-size:11px; color:#666; margin-top:5px; text-align:center; min-height:15px;"></div>
+           <div id="opt_result" style="font-size:11px; color:#666; margin-top:5px; text-align:center; min-height:15px;"></div>
         </div>
     </div>
 
-        <div id="panel_materials" class="panel-content">
-            <div class="panel-header"><h2>Material Estimates</h2></div>
+    <div id="panel_filters" class="panel-content">
+        <div class="panel-header"><h2>Visibility Filters</h2></div>
+        <div style="padding:15px; display:flex; flex-direction:column; height:100%;">
+            <div style="margin-bottom:5px; font-weight:bold; color:#555; font-size:12px;">Groups</div>
+            <div id="filter_groups_list" class="array-list" style="flex:1; max-height:200px; min-height:100px;"></div>
+            
+            <div style="margin:15px 0 5px 0; font-weight:bold; color:#555; font-size:12px; display:flex; justify-content:space-between; align-items:center;">
+                <span>Strings</span>
+                <div>
+                    <button class="btn btn-gray" style="padding:2px 6px; font-size:10px;" onclick="toggleAllStrings(true)">All</button>
+                    <button class="btn btn-gray" style="padding:2px 6px; font-size:10px;" onclick="toggleAllStrings(false)">None</button>
+                </div>
+            </div>
+            <div id="filter_strings_list" class="array-list" style="flex:1;"></div>
+        </div>
+    </div>
+
+    <div id="panel_materials" class="panel-content">
+        <div class="panel-header"><h2>Material Estimates</h2></div>
             <div style="padding-top:10px;">
                 <div class="props-row">
                 <div class="input-group" style="flex:1">
@@ -384,7 +418,9 @@
             strictOrient: false,
             snapToGrid: false,
             selectedId: null,
-            stringPermutation: null
+            stringPermutation: null,
+            hiddenGroups: new Set(),
+            hiddenStrings: new Set()
         };
 
         // --- HELPER: MASK GENERATION ---
@@ -577,6 +613,73 @@
         });
 
         window.addEventListener('mousemove', (e) => {
+            const rect = container.getBoundingClientRect();
+            const mx = (e.clientX - rect.left - view.x) / view.scale;
+            const my = (e.clientY - rect.top - view.y) / view.scale;
+
+            // Group Dragging Logic
+            if (activeGroupDrag) {
+                e.preventDefault();
+                e.stopPropagation();
+
+                const dx = mx - activeGroupDrag.startX;
+                const dy = my - activeGroupDrag.startY;
+                let movedCount = 0;
+
+                // Log every ~10th frame to avoid spam but show activity
+                if (Math.random() < 0.05) {
+                    console.log('[MouseMove] Dragging Group:', activeGroupDrag.name, 'Delta:', dx.toFixed(1), dy.toFixed(1));
+                }
+
+                state.tables.forEach(t => {
+                    if (t.group === activeGroupDrag.name) {
+                        const snapshot = activeGroupDrag.snapshot[t.id];
+                        if (snapshot) {
+                            let nx = snapshot.x + dx;
+                            let ny = snapshot.y + dy;
+
+                            if (state.snapToGrid) {
+                                nx = Math.round(nx / 20) * 20;
+                                ny = Math.round(ny / 20) * 20;
+                            }
+
+                            t.x = nx;
+                            t.y = ny;
+                            // Update map value reference (redundant but safe)
+                            state.tables.set(t.id, t);
+                            movedCount++;
+                        }
+                    }
+                });
+
+                if (movedCount > 0) {
+                    draw();
+                }
+                return;
+            }
+
+            // Priority 2: Anchor Dragging
+            if (isAnchorDrag && dragTarget) {
+                const t = state.tables.get(dragTarget.id);
+                if (t) {
+                    let nx = mx - dragOffset.x;
+                    let ny = my - dragOffset.y;
+
+                    if (state.snapToGrid) {
+                        const gridSize = 20;
+                        nx = Math.round(nx / gridSize) * gridSize;
+                        ny = Math.round(ny / gridSize) * gridSize;
+                    }
+
+                    t.x = nx;
+                    t.y = ny;
+                    state.tables.set(t.id, t);
+                    draw();
+                }
+                return;
+            }
+
+            // Priority 3: Panning
             if (view.isDragging) {
                 const dx = e.clientX - view.lastX;
                 const dy = e.clientY - view.lastY;
@@ -585,6 +688,66 @@
                 view.lastX = e.clientX;
                 view.lastY = e.clientY;
                 draw();
+                return;
+            }
+
+            // Priority 4: Cursor Hover Effects
+            if (activeTool === 'move') {
+                const data = generateData();
+                let cursor = 'default';
+                let tooltipShown = false;
+                let hoverHandle = false;
+
+                // Check Group Handles for Hover Cursor
+                for(let gh of groupHandles) {
+                    if(mx >= gh.x && mx <= gh.x + gh.w && my >= gh.y && my <= gh.y + gh.h) {
+                        cursor = 'move';
+                        hoverHandle = true;
+                        break;
+                    }
+                }
+
+                if (!hoverHandle) {
+                    for(let t of data.tables) {
+                        const local = getLocalCoords(mx, my, t);
+                        const dist = Math.sqrt(local.x * local.x + local.y * local.y);
+                        
+                        if (state.selectedId === t.id && dist <= 25) {
+                            cursor = 'move';
+                            break;
+                        }
+
+                        if (local.x >= 0 && local.x <= t.layout.w && local.y >= 0 && local.y <= t.layout.h) {
+                            if (state.selectedId === t.id) {
+                                cursor = 'crosshair'; 
+                                // ... Tooltip logic ...
+                                const pOffsetX = 5; const pOffsetY = 20;
+                                const isVert = t.railDir === 'col';
+                                const pW = isVert ? DRAW_OPTS.panelHeight : DRAW_OPTS.panelWidth;
+                                const pH = isVert ? DRAW_OPTS.panelWidth : DRAW_OPTS.panelHeight;
+                                const c = Math.floor((local.x - pOffsetX) / (pW + DRAW_OPTS.gapX));
+                                const r = Math.floor((local.y - pOffsetY) / (pH + DRAW_OPTS.gapY));
+                                
+                                if (t.grid[r] && t.grid[r][c]) {
+                                    const panel = t.grid[r][c];
+                                    const tooltip = document.getElementById('tooltip');
+                                    tooltip.style.display = 'block';
+                                    tooltip.style.left = (e.clientX + 10) + 'px';
+                                    tooltip.style.top = (e.clientY + 10) + 'px';
+                                    tooltip.innerHTML = `S${panel.stringId} (${panel.stringType}) | P${panel.panelNum}`;
+                                    tooltipShown = true;
+                                }
+                            } else {
+                                cursor = 'pointer'; 
+                            }
+                            break; 
+                        }
+                    }
+                }
+                canvas.style.cursor = cursor;
+                if (!tooltipShown) document.getElementById('tooltip').style.display = 'none';
+            } else {
+                canvas.style.cursor = 'grab';
             }
         });
 
@@ -594,10 +757,72 @@
 
 
         // --- UI LOGIC ---
+        function toggleAllStrings(show) {
+            state.hiddenStrings.clear();
+            if(!show) {
+                let total = 0;
+                state.stringTypes.forEach(t => total += t.count);
+                for(let i=1; i<=total; i++) state.hiddenStrings.add(i);
+            }
+            renderFilters();
+            draw();
+        }
 
+        function toggleFilterGroup(g) {
+            if(state.hiddenGroups.has(g)) state.hiddenGroups.delete(g);
+            else state.hiddenGroups.add(g);
+            draw();
+        }
+
+        function toggleFilterString(id) {
+            if(state.hiddenStrings.has(id)) state.hiddenStrings.delete(id);
+            else state.hiddenStrings.add(id);
+            draw();
+        }
+
+        function renderFilters() {
+            // Groups
+            const groups = Array.from(new Set(Array.from(state.tables.values()).map(t => t.group))).sort();
+            const gList = document.getElementById('filter_groups_list');
+            if(gList) {
+                gList.innerHTML = '';
+                groups.forEach(g => {
+                    const isVis = !state.hiddenGroups.has(g);
+                    const item = document.createElement('div');
+                    item.className = 'array-item';
+                    item.innerHTML = `<label style="display:flex; align-items:center; width:100%; cursor:pointer; margin:0;"><input type="checkbox" ${isVis?'checked':''} onchange="toggleFilterGroup('${g}')" style="margin-right:8px;"> ${g}</label>`;
+                    gList.appendChild(item);
+                });
+            }
+
+            // Strings
+            const sList = document.getElementById('filter_strings_list');
+            if(sList) {
+                sList.innerHTML = '';
+                let totalStrings = 0;
+                state.stringTypes.forEach(t => totalStrings += t.count);
+                
+                // If optimized, we need to map IDs correctly, but IDs are always 1..N
+                for(let i=1; i<=totalStrings; i++) {
+                    const isVis = !state.hiddenStrings.has(i);
+                    const item = document.createElement('div');
+                    item.className = 'array-item';
+                    const hue = (i * 137.5) % 360;
+                    const color = `hsla(${hue}, 70%, 50%, 1)`;
+                    
+                    item.innerHTML = `<label style="display:flex; align-items:center; width:100%; cursor:pointer; margin:0;">
+                        <input type="checkbox" ${isVis?'checked':''} onchange="toggleFilterString(${i})" style="margin-right:8px;"> 
+                        <span style="display:inline-block; width:10px; height:10px; border-radius:50%; background:${color}; margin-right:5px;"></span>
+                        S${i}
+                    </label>`;
+                    sList.appendChild(item);
+                }
+            }
+        }
         function renderUI() {
             renderArrayList();
             renderStringList();
+            renderFilters();
             updatePropsPanel();
             calculateMaterials();
         }
@@ -635,7 +860,7 @@
             const newData = { 
             id: id, name: `Array ${id}`, group: 'New Group', type: 'rect', 
             rows: 2, cols: 11, topBase: 8, bottomBase: 12, slopeType: "2",
-            railDir: 'row', slopeDir: 'S'
+            railDir: 'row', slopeDir: 'S', manualRot: false, rot: 0
         };
         newData.mask = generateMask(newData);
             state.tables.set(id, newData);
@@ -664,7 +889,13 @@
                 document.getElementById('prop_name').value = data.name;
                 document.getElementById('prop_group').value = data.group;
                 document.getElementById('prop_shape').value = data.type;
-                document.getElementById('prop_rot').value = data.rot || 0;
+                
+                const isManual = data.manualRot || false;
+                document.getElementById('chk_manual_rot').checked = isManual;
+                const rotInput = document.getElementById('prop_rot');
+                rotInput.value = data.rot || 0;
+                rotInput.disabled = !isManual;
+
                 document.getElementById('prop_rail_dir').value = data.railDir || 'row';
                 document.getElementById('prop_slope_dir').value = data.slopeDir || 'S';
 
@@ -739,9 +970,23 @@
             if (prop === 'bottom') { data.bottomBase = parseInt(val)||1; dimChanged = true; }
             if (prop === 'height') { data.rows = parseInt(val)||1; dimChanged = true; }
             if (prop === 'slope') { data.slopeType = val; dimChanged = true; }
+            
+            if (prop === 'manualRot') { 
+                data.manualRot = val;
+                if (!val) {
+                     const map = { 'S':0, 'SW':45, 'W':90, 'NW':135, 'N':180, 'NE':225, 'E':270, 'SE':315 };
+                     data.rot = map[data.slopeDir || 'S'] || 0;
+                }
+            }
             if (prop === 'rot') { data.rot = parseInt(val) || 0; }
             if (prop === 'railDir') { data.railDir = val; }
-            if (prop === 'slopeDir') { data.slopeDir = val; }
+            if (prop === 'slopeDir') { 
+                data.slopeDir = val; 
+                if (!data.manualRot) {
+                     const map = { 'S':0, 'SW':45, 'W':90, 'NW':135, 'N':180, 'NE':225, 'E':270, 'SE':315 };
+                     data.rot = map[val] || 0;
+                }
+            }
 
             if (dimChanged) data.mask = generateMask(data);
             state.tables.set(state.selectedId, data);
@@ -793,27 +1038,56 @@
             // state.inverters is now the source of truth, updated by updateInverters()
             
             // 1. Strings Setup
-            let strings = [];
-            let globalStrId = 1;
+            let rawStrings = [];
             state.stringTypes.forEach((type) => {
                 for(let i=0; i<type.count; i++) {
-                    const hue = (globalStrId * 137.5) % 360;
-                    strings.push({ id: globalStrId++, size: type.size, type: `${type.size}p`, color: `hsla(${hue}, 70%, 50%, 1)`, lightColor: `hsla(${hue}, 70%, 90%, 1)` });
+                    rawStrings.push({ size: type.size, type: `${type.size}p` });
                 }
             });
 
-            // Optimization: Apply Shuffle
-            if (state.stringPermutation && state.stringPermutation.length === strings.length) {
-                const reordered = [];
-                state.stringPermutation.forEach(idx => reordered.push(strings[idx]));
-                strings = reordered;
+            // Optimization: Apply Shuffle (Handling Gaps)
+            let strings = [];
+            if (state.stringPermutation) {
+                state.stringPermutation.forEach(idx => {
+                    if (idx < rawStrings.length) {
+                        strings.push(rawStrings[idx]);
+                    } else {
+                        // This is an excess capacity "Gap" string of size 1
+                        strings.push({ size: 1, type: 'gap', isGap: true });
+                    }
+                });
             } else {
                 state.stringPermutation = null;
+                strings = [...rawStrings];
             }
+
+            // Assign IDs and Colors sequentially to REAL strings
+            let realStringCounter = 1;
+            strings.forEach((s) => {
+                if (!s.isGap) {
+                    s.id = realStringCounter++;
+                    const hue = (s.id * 137.5) % 360;
+                    s.color = `hsla(${hue}, 70%, 50%, 1)`;
+                    s.lightColor = `hsla(${hue}, 70%, 90%, 1)`;
+                }
+            });
 
             let panelStream = [];
             strings.forEach(str => {
-                for(let p=1; p<=str.size; p++) panelStream.push({ stringId: str.id, stringType: str.type, panelNum: p, totalInString: str.size, color: str.color, lightColor: str.lightColor });
+                if (str.isGap) {
+                     panelStream.push({ isGap: true });
+                } else {
+                    for(let p=1; p<=str.size; p++) {
+                        panelStream.push({ 
+                            stringId: str.id, 
+                            stringType: str.type, 
+                            panelNum: p, 
+                            totalInString: str.size, 
+                            color: str.color, 
+                            lightColor: str.lightColor 
+                        });
+                    }
+                }
             });
 
             // 2. Table Processing & Layout Engine
@@ -828,10 +1102,15 @@
             });
 
             let groups = {};
-            rawTables.forEach(t => {
-                if(!groups[t.group]) groups[t.group] = [];
-                groups[t.group].push(t);
-            });
+            if (state.allowCrossGroup) {
+                // Treat all arrays as one contiguous group to prioritize slope continuity
+                groups['__Combined__'] = rawTables;
+            } else {
+                rawTables.forEach(t => {
+                    if(!groups[t.group]) groups[t.group] = [];
+                    groups[t.group].push(t);
+                });
+            }
 
             let layoutY = DRAW_OPTS.tableMargin;
             let layoutMaxW = 0;
@@ -954,7 +1233,10 @@
                 const finalGrid = Array(rows).fill(null).map(() => Array(cols).fill(null));
                 slots.forEach((slot, index) => {
                     if (index < panels.length) {
-                        finalGrid[slot.r][slot.c] = panels[index];
+                        // Only assign if it's a real panel, otherwise leave slot empty (Gap)
+                        if (!panels[index].isGap) {
+                            finalGrid[slot.r][slot.c] = panels[index];
+                        }
                     }
                 });
                 return finalGrid;
@@ -1208,8 +1490,58 @@
         const canvas = document.getElementById('solarCanvas');
         const ctx = canvas.getContext('2d');
         // Removed clickZones, using Math-based hit test in handlers
-        
+        function getPolyIntersection(p1, p2, normal, k) {
+            const dot1 = p1.x * normal.x + p1.y * normal.y;
+            const dot2 = p2.x * normal.x + p2.y * normal.y;
+            const t = (k - dot1) / (dot2 - dot1);
+            return { x: p1.x + t * (p2.x - p1.x), y: p1.y + t * (p2.y - p1.y) };
+        }
+
+        function clipPoly(poly, siteA, siteB) {
+            const normal = { x: siteB.x - siteA.x, y: siteB.y - siteA.y };
+            const midpoint = { x: (siteA.x + siteB.x) / 2, y: (siteA.y + siteB.y) / 2 };
+            const k = midpoint.x * normal.x + midpoint.y * normal.y;
+            
+            const newPoly = [];
+            for (let i = 0; i < poly.length; i++) {
+                const cur = poly[i];
+                const prev = poly[(i - 1 + poly.length) % poly.length];
+                
+                const curIn = (cur.x * normal.x + cur.y * normal.y) <= k;
+                const prevIn = (prev.x * normal.x + prev.y * normal.y) <= k;
+
+                if (curIn && prevIn) {
+                    newPoly.push(cur);
+                } else if (curIn && !prevIn) {
+                    newPoly.push(getPolyIntersection(prev, cur, normal, k));
+                    newPoly.push(cur);
+                } else if (!curIn && prevIn) {
+                    newPoly.push(getPolyIntersection(prev, cur, normal, k));
+                }
+            }
+            return newPoly;
+        }
+
+        function getLayoutCorners(t) {
+            const cx = t.layout.x + t.layout.w / 2;
+            const cy = t.layout.y + t.layout.h / 2;
+            const ang = (t.layout.rot || 0) * Math.PI / 180;
+            const cos = Math.cos(ang), sin = Math.sin(ang);
+            const hw = t.layout.w / 2, hh = t.layout.h / 2;
+            
+            return [
+                { x: cx + (-hw * cos - -hh * sin), y: cy + (-hw * sin + -hh * cos) },
+                { x: cx + (hw * cos - -hh * sin), y: cy + (hw * sin + -hh * cos) },
+                { x: cx + (hw * cos - hh * sin), y: cy + (hw * sin + hh * cos) },
+                { x: cx + (-hw * cos - hh * sin), y: cy + (-hw * sin + hh * cos) }
+            ];
+        }
+
+        let groupHandles = [];
+        let activeGroupDrag = null;
+
         function draw() {
+            groupHandles = [];
             const data = generateData();
 
             // Clear Screen
@@ -1219,6 +1551,77 @@
             ctx.save();
             ctx.translate(view.x, view.y);
             ctx.scale(view.scale, view.scale);
+
+            // 0. Draw Groups & Voronoi Cells
+            const groups = {};
+            data.tables.forEach(t => {
+                if(!groups[t.group]) groups[t.group] = [];
+                groups[t.group].push(t);
+            });
+
+            ctx.lineWidth = 1;
+            
+            for(let grpName in groups) {
+                const arrs = groups[grpName];
+                let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+                const centers = [];
+
+                // Calculate Group Bounds
+                arrs.forEach(t => {
+                    const corners = getLayoutCorners(t);
+                    corners.forEach(p => {
+                        minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
+                        minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y);
+                    });
+                    centers.push({ 
+                        x: t.layout.x + t.layout.w/2, 
+                        y: t.layout.y + t.layout.h/2,
+                        id: t.id
+                    });
+                });
+
+                const pad = 20;
+                minX -= pad; minY -= pad; maxX += pad; maxY += pad;
+
+                // Draw Group Rect
+                ctx.strokeStyle = '#334155'; 
+                ctx.setLineDash([5, 5]);
+                ctx.strokeRect(minX, minY, maxX - minX, maxY - minY);
+                ctx.setLineDash([]);
+                
+                // Group Handle (Top Left Tab)
+                const hH = 16; const hW = 60;
+                ctx.fillStyle = '#334155';
+                ctx.fillRect(minX, minY - hH, hW, hH);
+                ctx.fillStyle = '#fff'; ctx.font = 'bold 10px sans-serif'; ctx.textAlign = 'left';
+                ctx.fillText(grpName.substring(0, 9), minX + 4, minY - 4);
+                groupHandles.push({ name: grpName, x: minX, y: minY - hH, w: hW, h: hH });
+
+                // Draw Voronoi Cells
+                if (centers.length > 1) {
+                    ctx.strokeStyle = '#cbd5e1'; 
+                    centers.forEach(site => {
+                        let poly = [
+                            {x: minX, y: minY}, {x: maxX, y: minY}, 
+                            {x: maxX, y: maxY}, {x: minX, y: maxY}
+                        ];
+
+                        centers.forEach(other => {
+                            if (site.id !== other.id) {
+                                poly = clipPoly(poly, site, other);
+                            }
+                        });
+
+                        if (poly.length > 0) {
+                            ctx.beginPath();
+                            ctx.moveTo(poly[0].x, poly[0].y);
+                            for(let i=1; i<poly.length; i++) ctx.lineTo(poly[i].x, poly[i].y);
+                            ctx.closePath();
+                            ctx.stroke();
+                        }
+                    });
+                }
+            }
 
             // Draw Arrays
             data.tables.forEach(table => {
@@ -1271,6 +1674,10 @@
                 const pH = isVert ? DRAW_OPTS.panelWidth : DRAW_OPTS.panelHeight;
 
                 let connectionPoints = {};
+                
+                // Group Visibility Check
+                const isGroupHidden = state.hiddenGroups.has(table.group);
+
                 table.grid.forEach((row, rIndex) => {
                     row.forEach((panel, cIndex) => {
                         const x = pOffsetX + (cIndex * (pW + DRAW_OPTS.gapX));
@@ -1278,15 +1685,22 @@
                         const isMaskActive = table.mask[rIndex] && table.mask[rIndex][cIndex] === 1;
 
                         if (panel) {
+                            // Check String Visibility
+                            const isStringHidden = state.hiddenStrings.has(panel.stringId);
+                            ctx.globalAlpha = (isGroupHidden || isStringHidden) ? 0.4 : 1.0;
+
                             ctx.fillStyle = panel.lightColor; ctx.fillRect(x, y, pW, pH);
                             ctx.strokeStyle = panel.color; ctx.lineWidth = 2; ctx.strokeRect(x, y, pW, pH);
                             ctx.fillStyle = '#000'; ctx.textAlign = 'center'; ctx.font = '9px sans-serif';
                             ctx.fillText(`S${panel.stringId}`, x + pW/2, y + pH/2 - 4);
                             ctx.font = 'bold 9px sans-serif'; ctx.fillText(panel.panelNum, x + pW/2, y + pH/2 + 7);
                             
+                            // Restore Alpha
+                            ctx.globalAlpha = 1.0;
+
                             // Local coords for wires
                             if(!connectionPoints[panel.stringId]) connectionPoints[panel.stringId] = [];
-                            connectionPoints[panel.stringId].push({ x: x + pW/2, y: y + pH/2, num: panel.panelNum, color: panel.color });
+                            connectionPoints[panel.stringId].push({ x: x + pW/2, y: y + pH/2, num: panel.panelNum, color: panel.color, hidden: isStringHidden });
                         } else if (!isMaskActive) {
                             ctx.fillStyle = '#f3f4f6'; ctx.fillRect(x, y, pW, pH);
                             ctx.strokeStyle = '#e5e7eb'; ctx.lineWidth = 1;
@@ -1301,6 +1715,11 @@
                 // Wires
                 for (let sId in connectionPoints) {
                     const points = connectionPoints[sId]; points.sort((a, b) => a.num - b.num);
+                    
+                    // Wire opacity logic: if Group is hidden OR String is hidden
+                    const isStringHidden = state.hiddenStrings.has(parseInt(sId));
+                    ctx.globalAlpha = (isGroupHidden || isStringHidden) ? 0.4 : 1.0;
+
                     if(points.length > 1) {
                         ctx.beginPath(); ctx.strokeStyle = points[0].color; ctx.lineWidth = 3; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
                         ctx.moveTo(points[0].x, points[0].y);
@@ -1313,6 +1732,8 @@
                     points.forEach(p => {
                         ctx.beginPath(); ctx.fillStyle = '#fff'; ctx.arc(p.x, p.y, 3, 0, Math.PI*2); ctx.fill(); ctx.strokeStyle = '#333'; ctx.lineWidth = 1; ctx.stroke();
                     });
+                    
+                    ctx.globalAlpha = 1.0;
                 }
                 
                 ctx.restore();
@@ -1413,6 +1834,10 @@
             const mx = (e.clientX - rect.left - view.x) / view.scale;
             const my = (e.clientY - rect.top - view.y) / view.scale;
             
+            // DEBUG: Mouse Click
+            console.log('[MouseDown] Screen:', e.clientX, e.clientY, 'World:', mx.toFixed(1), my.toFixed(1));
+            console.log('[MouseDown] Active Group Handles:', JSON.parse(JSON.stringify(groupHandles)));
+
             // 1. Pan Tool Override
             if (activeTool === 'pan') {
                 view.isDragging = true;
@@ -1421,8 +1846,29 @@
                 canvas.style.cursor = 'grabbing';
                 return;
             }
-
+            
             const data = generateData();
+
+            // Check Group Handles
+            for(let gh of groupHandles) {
+                if(mx >= gh.x && mx <= gh.x + gh.w && my >= gh.y && my <= gh.y + gh.h) {
+                    console.log('[MouseDown] Hit Group Handle:', gh.name);
+                    const snapshot = {};
+                    
+                    // Capture current visual positions (resolving undefined state)
+                    data.tables.forEach(t => {
+                        if(t.group === gh.name) {
+                            snapshot[t.id] = { x: t.layout.x, y: t.layout.y };
+                        }
+                    });
+                    
+                    activeGroupDrag = { name: gh.name, startX: mx, startY: my, snapshot };
+                    return;
+                }
+            }
+            
+            console.log('[MouseDown] No handle hit. Checking arrays...');
+
             let hitArray = null;
             let hitAnchor = false;
 
@@ -1492,6 +1938,45 @@
             const rect = container.getBoundingClientRect();
             const mx = (e.clientX - rect.left - view.x) / view.scale;
             const my = (e.clientY - rect.top - view.y) / view.scale;
+
+            if (activeGroupDrag) {
+                e.preventDefault(); // Prevent selection
+                const dx = mx - activeGroupDrag.startX;
+                const dy = my - activeGroupDrag.startY;
+                
+                let movedCount = 0;
+                state.tables.forEach(t => {
+                    // Check if this table belongs to the group being dragged
+                    if (t.group === activeGroupDrag.name) {
+                        // Check if we have a snapshot for this table
+                        const startPos = activeGroupDrag.snapshot[t.id];
+                        if (startPos) {
+                            let nx = startPos.x + dx;
+                            let ny = startPos.y + dy;
+                            
+                            if (state.snapToGrid) {
+                                nx = Math.round(nx / 20) * 20;
+                                ny = Math.round(ny / 20) * 20;
+                            }
+                            
+                            t.x = nx;
+                            t.y = ny;
+                            state.tables.set(t.id, t);
+                            movedCount++;
+                        } else {
+                            // Debug mismatch
+                            console.warn(`[MouseMove] Table ${t.id} in group ${t.group} missing from snapshot`, Object.keys(activeGroupDrag.snapshot));
+                        }
+                    }
+                });
+
+                if (movedCount > 0) {
+                    draw();
+                } else {
+                    console.warn('[MouseMove] Active drag but 0 tables moved. Name:', activeGroupDrag.name);
+                }
+                return;
+            }
 
             // Priority 1: Anchor Dragging
             if (isAnchorDrag && dragTarget) {
@@ -1578,11 +2063,12 @@
         });
 
         window.addEventListener('mouseup', () => {
-            if (isAnchorDrag) {
+            if (isAnchorDrag || activeGroupDrag) {
                 saveToLocal();
             }
             dragTarget = null;
             isAnchorDrag = false;
+            activeGroupDrag = null;
             view.isDragging = false;
         });
 
@@ -1974,15 +2460,139 @@
         win.document.write(htmlContent); win.document.close(); win.focus();
         setTimeout(() => { win.print(); win.close(); }, 500);
     }
+        function autoConfigStrings() {
+            const msg = document.getElementById('auto_str_msg');
+            msg.textContent = "Calculating best string configuration...";
+            msg.style.color = "#d97706";
+
+            setTimeout(() => {
+                // 1. Count Total Panels on Map
+                let totalPanels = 0;
+                state.tables.forEach(t => {
+                    if (t.mask) t.mask.forEach(r => r.forEach(c => totalPanels += c));
+                });
+
+                if (totalPanels === 0) {
+                    msg.textContent = "Place panels on the map first.";
+                    return;
+                }
+
+                // 2. Get Constraints
+                const minLen = parseInt(document.getElementById('inp_str_min').value) || 8;
+                const maxLen = parseInt(document.getElementById('inp_str_max').value) || 13;
+                const maxStrings = state.inverters * state.mpptCount * state.stringsPerMppt;
+
+                // 3. Iterate Valid Counts
+                // Min strings needed = ceil(total / maxLen)
+                // Max strings possible = floor(total / minLen)
+                const startCount = Math.ceil(totalPanels / maxLen);
+                const endCount = Math.floor(totalPanels / minLen);
+
+                let bestConfig = null;
+                let minMetric = Infinity;
+
+                // Debug info
+                console.log(`AutoString: Panels=${totalPanels}, Range=[${startCount}, ${endCount}], Limit=${maxStrings}`);
+
+                for (let count = startCount; count <= endCount; count++) {
+                    if (count > maxStrings) continue;
+
+                    // Generate Balanced Set for this Count
+                    // e.g. 50 panels, 4 strings => Base 12, Remainder 2 => Two 13s, Two 12s
+                    const baseSize = Math.floor(totalPanels / count);
+                    const remainder = totalPanels % count;
+                    
+                    const types = [];
+                    // We have 'remainder' strings of size (baseSize + 1)
+                    if (remainder > 0) types.push({ count: remainder, size: baseSize + 1 });
+                    // We have 'count - remainder' strings of size baseSize
+                    if (count - remainder > 0) types.push({ count: count - remainder, size: baseSize });
+
+                    // Quick Simulation to test Layout Fit
+                    // We interpret this temporary config into a flat permutation
+                    let tempStrings = [];
+                    types.forEach(t => { for(let k=0; k<t.count; k++) tempStrings.push({ size: t.size, type: `${t.size}p` }); });
+                    
+                    // Add Excess Gaps if needed (though we matched totalPanels exactly, gaps might occur if logic changes, strictly here we matched sum)
+                    // Actually, runOptimization logic handles gaps if sum != total slots.
+                    // Here sum == totalPanels. But TotalSlots might be > TotalPanels.
+                    // The metric calculation handles gaps fine.
+
+                    // Try a few shuffles for this configuration to see if it *can* fit well
+                    const iterations = 20; 
+                    for(let i=0; i<iterations; i++) {
+                        // Shuffle tempStrings indices
+                        const perm = Array.from({length: tempStrings.length}, (_, k) => k);
+                        for (let k = perm.length - 1; k > 0; k--) {
+                            const j = Math.floor(Math.random() * (k + 1));
+                            [perm[k], perm[j]] = [perm[j], perm[k]];
+                        }
+
+                        // Temporarily Mock State
+                        const savedTypes = state.stringTypes;
+                        const savedPerm = state.stringPermutation;
+                        
+                        // We need to inject this into generateData. 
+                        // Instead of overwriting global state heavily, let's just mock the 'stringPermutation' logic behavior
+                        // But generateData reads state.stringTypes.
+                        
+                        state.stringTypes = types;
+                        state.stringPermutation = perm; // This perm is 0..count-1. 
+                        
+                        // We need to handle the case where generateData expects specific format.
+                        // state.stringTypes is [{count, size}].
+                        // state.stringPermutation is indices into the expanded string list.
+                        
+                        const data = generateData();
+                        const stats = calculateMetric(data.tables);
+                        
+                        // Composite Score: Splits * 1000 + SumSq
+                        // We prioritize zero splits heavily.
+                        const score = (stats.splits * 10000) + stats.sumSq;
+
+                        if (score < minMetric) {
+                            minMetric = score;
+                            bestConfig = { types: JSON.parse(JSON.stringify(types)), perm: perm, metric: score };
+                        }
+
+                        // Restore
+                        state.stringTypes = savedTypes;
+                        state.stringPermutation = savedPerm;
+                    }
+                }
+
+                if (bestConfig) {
+                    state.stringTypes = bestConfig.types;
+                    state.stringPermutation = bestConfig.perm;
+                    msg.innerHTML = `Found Config: <b style="color:#10b981">${bestConfig.types.map(t=>`${t.count}x${t.size}`).join(', ')}</b> (Score: ${Math.round(bestConfig.metric)})`;
+                    renderStringList();
+                    draw();
+                    saveToLocal();
+                } else {
+                    msg.textContent = "No valid configuration found within limits.";
+                    msg.style.color = "#ef4444";
+                }
+            }, 50);
+        }
         function runOptimization() {
             const resultDiv = document.getElementById('opt_result');
             resultDiv.textContent = "Optimizing string order...";
             resultDiv.style.color = "#d97706";
             
             setTimeout(() => {
-                let totalStrings = 0;
-                state.stringTypes.forEach(t => totalStrings += t.count);
-                if (totalStrings === 0) { resultDiv.textContent = "No strings to optimize."; return; }
+                let totalPanels = 0;
+                let totalSlots = 0;
+                
+                state.stringTypes.forEach(t => totalPanels += (t.count * t.size));
+                state.tables.forEach(t => {
+                    if (t.mask) t.mask.forEach(r => r.forEach(c => totalSlots += c));
+                });
+
+                const totalStringGroups = state.stringTypes.reduce((acc, t) => acc + t.count, 0);
+                const excess = Math.max(0, totalSlots - totalPanels);
+                const totalItems = totalStringGroups + excess;
+                
+                if (totalItems === 0) { resultDiv.textContent = "Nothing to optimize."; return; }
                 
                 let bestPerm = null;
                 let minSumSq = Infinity;
@@ -1991,7 +2601,8 @@
                 const iterations = 500;
                 
                 for(let i=0; i<iterations; i++) {
-                    const perm = Array.from({length: totalStrings}, (_, k) => k);
+                    const perm = Array.from({length: totalItems}, (_, k) => k);
+                    // Fisher-Yates shuffle
                     for (let k = perm.length - 1; k > 0; k--) {
                         const j = Math.floor(Math.random() * (k + 1));
                         [perm[k], perm[j]] = [perm[j], perm[k]];
@@ -2026,6 +2637,9 @@
             tables.forEach(t => {
                 if(t._assignedPanels && t.grid) {
                     t._assignedPanels.forEach(p => {
+                        // Ignore Gaps in scoring
+                        if (p.isGap) return;
+
                         let r = -1, c = -1;
                         for(let rr=0; rr<t.grid.length; rr++) {
                             for(let cc=0; cc<t.grid[0].length; cc++) {
